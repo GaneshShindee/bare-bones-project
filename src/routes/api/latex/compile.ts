@@ -57,7 +57,6 @@ export const Route = createFileRoute("/api/latex/compile")({
         catch { return Response.json({ success: false, errors: [{ line: null, message: "Invalid JSON body" }], log: "" }, { status: 400 }); }
 
         const latex = (body.latex ?? "").toString();
-        const filename = (body.filename ?? "document.tex").toString().replace(/[^A-Za-z0-9._-]+/g, "_") || "document.tex";
         if (!latex.trim()) {
           return Response.json({ success: false, errors: [{ line: null, message: "Empty LaTeX source" }], log: "" }, { status: 400 });
         }
@@ -66,7 +65,9 @@ export const Route = createFileRoute("/api/latex/compile")({
         }
 
         const form = new FormData();
-        form.append("filename[]", filename);
+        // texlive.net requires the main file to be named exactly document.tex.
+        // Passing resume.tex (or any other name) produces: "Bad Form: no main document".
+        form.append("filename[]", "document.tex");
         form.append("filecontents[]", latex);
         form.append("engine", "pdflatex");
         form.append("return", "pdf");
@@ -98,6 +99,9 @@ export const Route = createFileRoute("/api/latex/compile")({
         // Failure — texlive.net returns the raw .log as text/plain.
         const log = await upstream.text();
         const errors = parseLatexLog(log);
+        if (/Bad Form: no main document/i.test(log)) {
+          errors.push({ line: null, message: "Compiler service rejected the request because no main document was supplied." });
+        }
         if (errors.length === 0) {
           errors.push({ line: null, message: "Compilation failed. See log below." });
         }
