@@ -39,6 +39,7 @@ function WorkspacePage() {
   const q = useQuery({ queryKey: ["resume-version", id], queryFn: () => getFn({ data: { id } }) });
   const [tex, setTex] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [errorLines, setErrorLines] = useState<number[]>([]);
 
   useEffect(() => {
     if (q.data && !dirty) setTex(q.data.version.tex_content);
