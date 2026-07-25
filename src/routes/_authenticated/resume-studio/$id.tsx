@@ -155,15 +155,17 @@ function WorkspacePage() {
             {dirty && <span className="text-amber-600 dark:text-amber-400">● Unsaved</span>}
           </div>
           <div className="flex-1 min-h-0">
-            <LatexEditor value={tex} onChange={(v) => { setTex(v); setDirty(true); }} />
+            <LatexEditor value={tex} onChange={(v) => { setTex(v); setDirty(true); }} errorLines={errorLines} />
           </div>
         </Card>
         <Card className="overflow-hidden flex flex-col min-h-0">
           <LatexPreview
             tex={tex}
             filename={q.data.project?.main_tex_filename ?? "resume.tex"}
+            downloadName={`${(v.company || "resume").replace(/[^A-Za-z0-9]+/g, "_")}_${(v.job_title || "role").replace(/[^A-Za-z0-9]+/g, "_")}`}
             autoCompile
             onCompiled={(b64) => uploadPdf.mutate(b64)}
+            onErrors={(errs) => setErrorLines(errs.map((e) => e.line ?? 0).filter((n) => n > 0))}
           />
         </Card>
       </div>
