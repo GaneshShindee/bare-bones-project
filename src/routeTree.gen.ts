@@ -25,6 +25,7 @@ import { Route as AuthenticatedFollowupsRouteImport } from './routes/_authentica
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authenticated/analytics'
 import { Route as AuthenticatedResumeStudioIndexRouteImport } from './routes/_authenticated/resume-studio/index'
+import { Route as ApiLatexCompileRouteImport } from './routes/api/latex/compile'
 import { Route as AuthenticatedResumeStudioIdRouteImport } from './routes/_authenticated/resume-studio/$id'
 import { Route as AuthenticatedRecipientsIdRouteImport } from './routes/_authenticated/recipients.$id'
 import { Route as AuthenticatedCampaignsIdRouteImport } from './routes/_authenticated/campaigns.$id'
@@ -113,6 +114,11 @@ const AuthenticatedResumeStudioIndexRoute =
     path: '/resume-studio/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const ApiLatexCompileRoute = ApiLatexCompileRouteImport.update({
+  id: '/api/latex/compile',
+  path: '/api/latex/compile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedResumeStudioIdRoute =
   AuthenticatedResumeStudioIdRouteImport.update({
     id: '/resume-studio/$id',
@@ -165,6 +171,7 @@ export interface FileRoutesByFullPath {
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/recipients/$id': typeof AuthenticatedRecipientsIdRoute
   '/resume-studio/$id': typeof AuthenticatedResumeStudioIdRoute
+  '/api/latex/compile': typeof ApiLatexCompileRoute
   '/resume-studio/': typeof AuthenticatedResumeStudioIndexRoute
   '/api/public/gmail/callback': typeof ApiPublicGmailCallbackRoute
   '/api/public/track/open/$token': typeof ApiPublicTrackOpenTokenRoute
@@ -188,6 +195,7 @@ export interface FileRoutesByTo {
   '/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/recipients/$id': typeof AuthenticatedRecipientsIdRoute
   '/resume-studio/$id': typeof AuthenticatedResumeStudioIdRoute
+  '/api/latex/compile': typeof ApiLatexCompileRoute
   '/resume-studio': typeof AuthenticatedResumeStudioIndexRoute
   '/api/public/gmail/callback': typeof ApiPublicGmailCallbackRoute
   '/api/public/track/open/$token': typeof ApiPublicTrackOpenTokenRoute
@@ -213,6 +221,7 @@ export interface FileRoutesById {
   '/_authenticated/campaigns/$id': typeof AuthenticatedCampaignsIdRoute
   '/_authenticated/recipients/$id': typeof AuthenticatedRecipientsIdRoute
   '/_authenticated/resume-studio/$id': typeof AuthenticatedResumeStudioIdRoute
+  '/api/latex/compile': typeof ApiLatexCompileRoute
   '/_authenticated/resume-studio/': typeof AuthenticatedResumeStudioIndexRoute
   '/api/public/gmail/callback': typeof ApiPublicGmailCallbackRoute
   '/api/public/track/open/$token': typeof ApiPublicTrackOpenTokenRoute
@@ -238,6 +247,7 @@ export interface FileRouteTypes {
     | '/campaigns/$id'
     | '/recipients/$id'
     | '/resume-studio/$id'
+    | '/api/latex/compile'
     | '/resume-studio/'
     | '/api/public/gmail/callback'
     | '/api/public/track/open/$token'
@@ -261,6 +271,7 @@ export interface FileRouteTypes {
     | '/campaigns/$id'
     | '/recipients/$id'
     | '/resume-studio/$id'
+    | '/api/latex/compile'
     | '/resume-studio'
     | '/api/public/gmail/callback'
     | '/api/public/track/open/$token'
@@ -285,6 +296,7 @@ export interface FileRouteTypes {
     | '/_authenticated/campaigns/$id'
     | '/_authenticated/recipients/$id'
     | '/_authenticated/resume-studio/$id'
+    | '/api/latex/compile'
     | '/_authenticated/resume-studio/'
     | '/api/public/gmail/callback'
     | '/api/public/track/open/$token'
@@ -296,6 +308,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ApiLatexCompileRoute: typeof ApiLatexCompileRoute
   ApiPublicGmailCallbackRoute: typeof ApiPublicGmailCallbackRoute
   ApiPublicTrackOpenTokenRoute: typeof ApiPublicTrackOpenTokenRoute
   ApiPublicTrackPdfTokenRoute: typeof ApiPublicTrackPdfTokenRoute
@@ -415,6 +428,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedResumeStudioIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/latex/compile': {
+      id: '/api/latex/compile'
+      path: '/api/latex/compile'
+      fullPath: '/api/latex/compile'
+      preLoaderRoute: typeof ApiLatexCompileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/resume-studio/$id': {
       id: '/_authenticated/resume-studio/$id'
       path: '/resume-studio/$id'
@@ -504,6 +524,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ApiLatexCompileRoute: ApiLatexCompileRoute,
   ApiPublicGmailCallbackRoute: ApiPublicGmailCallbackRoute,
   ApiPublicTrackOpenTokenRoute: ApiPublicTrackOpenTokenRoute,
   ApiPublicTrackPdfTokenRoute: ApiPublicTrackPdfTokenRoute,
@@ -511,13 +532,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
