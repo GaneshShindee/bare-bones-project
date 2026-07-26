@@ -40,6 +40,8 @@ function WorkspacePage() {
   const [tex, setTex] = useState("");
   const [dirty, setDirty] = useState(false);
   const [errorLines, setErrorLines] = useState<number[]>([]);
+  const [compiledTex, setCompiledTex] = useState<string | null>(null);
+  const [hasPdf, setHasPdf] = useState(false);
 
   useEffect(() => {
     if (q.data && !dirty) setTex(q.data.version.tex_content);
