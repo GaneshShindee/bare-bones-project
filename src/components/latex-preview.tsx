@@ -121,9 +121,22 @@ export function LatexPreview({
     URL.revokeObjectURL(url);
   };
 
-  const print = () => { iframeRef.current?.contentWindow?.print(); };
-  const fullscreen = () => { iframeRef.current?.requestFullscreen().catch(() => {}); };
+  const print = () => {
+    if (!pdfUrl) return;
+    const w = window.open(pdfUrl, "_blank");
+    w?.addEventListener("load", () => w.print());
+  };
+  const fullscreen = () => { viewerWrapRef.current?.requestFullscreen().catch(() => {}); };
   const applyZoom = (next: number) => { setFitMode("custom"); setZoom(Math.max(25, Math.min(400, next))); };
+
+  useLayoutEffect(() => {
+    const el = viewerWrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setContainerWidth(el.clientWidth));
+    ro.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
 
   return (
     <div className="flex flex-col h-full min-h-0">
