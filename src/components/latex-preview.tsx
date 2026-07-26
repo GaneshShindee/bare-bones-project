@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Loader2, RefreshCw, Download, FileText, AlertTriangle, CheckCircle2,
   ZoomIn, ZoomOut, Maximize2, Printer, RotateCw,
 } from "lucide-react";
+import { PdfViewer } from "@/components/pdf-viewer";
 
 type CompileError = { line: number | null; message: string; suggestion?: string };
 type CompileResponse =
@@ -33,10 +34,12 @@ export function LatexPreview({
   const [errors, setErrors] = useState<CompileError[]>([]);
   const [log, setLog] = useState("");
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(100); // percent; passed via #zoom= fragment
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [zoom, setZoom] = useState(100);
   const [rotation, setRotation] = useState(0);
   const [fitMode, setFitMode] = useState<"width" | "page" | "custom">("width");
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(600);
+  const viewerWrapRef = useRef<HTMLDivElement | null>(null);
   const lastTexRef = useRef<string>("");
   const inflightRef = useRef<AbortController | null>(null);
 
@@ -62,6 +65,7 @@ export function LatexPreview({
       if (data.success) {
         const bytes = base64ToBytes(data.pdfBase64);
         const blob = new Blob([bytes.slice().buffer], { type: "application/pdf" });
+        setPdfBytes(new Uint8Array(bytes));
         const url = URL.createObjectURL(blob);
         setPdfUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
         setStatus("success");
@@ -117,9 +121,22 @@ export function LatexPreview({
     URL.revokeObjectURL(url);
   };
 
-  const print = () => { iframeRef.current?.contentWindow?.print(); };
-  const fullscreen = () => { iframeRef.current?.requestFullscreen().catch(() => {}); };
+  const print = () => {
+    if (!pdfUrl) return;
+    const w = window.open(pdfUrl, "_blank");
+    w?.addEventListener("load", () => w.print());
+  };
+  const fullscreen = () => { viewerWrapRef.current?.requestFullscreen().catch(() => {}); };
   const applyZoom = (next: number) => { setFitMode("custom"); setZoom(Math.max(25, Math.min(400, next))); };
+
+  useLayoutEffect(() => {
+    const el = viewerWrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setContainerWidth(el.clientWidth));
+    ro.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -167,15 +184,17 @@ export function LatexPreview({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 relative bg-muted/20">
-        {iframeSrc ? (
-          <iframe
-            ref={iframeRef}
-            title="Resume PDF"
-            src={iframeSrc}
-            className="w-full h-full border-0"
-            style={{ transform: rotation ? `rotate(${rotation}deg)` : undefined, transformOrigin: "center center" }}
-          />
+      <div ref={viewerWrapRef} className="flex-1 min-h-0 relative bg-muted/20 overflow-hidden">
+        {pdfBytes ? (
+          <div className="w-full h-full" style={{ transform: rotation && fitMode !== "custom" ? undefined : undefined }}>
+            <PdfViewer
+              data={pdfBytes}
+              zoom={zoom}
+              fitMode={fitMode}
+              rotation={rotation}
+              containerWidth={containerWidth}
+            />
+          </div>
         ) : (
           <div className="h-full grid place-items-center text-center p-6">
             <div>
