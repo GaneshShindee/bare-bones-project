@@ -34,10 +34,12 @@ export function LatexPreview({
   const [errors, setErrors] = useState<CompileError[]>([]);
   const [log, setLog] = useState("");
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(100); // percent; passed via #zoom= fragment
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [zoom, setZoom] = useState(100);
   const [rotation, setRotation] = useState(0);
   const [fitMode, setFitMode] = useState<"width" | "page" | "custom">("width");
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(600);
+  const viewerWrapRef = useRef<HTMLDivElement | null>(null);
   const lastTexRef = useRef<string>("");
   const inflightRef = useRef<AbortController | null>(null);
 
