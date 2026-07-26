@@ -185,7 +185,7 @@ function WorkspacePage() {
             filename={q.data.project?.main_tex_filename ?? "resume.tex"}
             downloadName={`${(v.company || "resume").replace(/[^A-Za-z0-9]+/g, "_")}_${(v.job_title || "role").replace(/[^A-Za-z0-9]+/g, "_")}`}
             autoCompile
-            onCompiled={(b64) => uploadPdf.mutate(b64)}
+            onCompiled={(b64) => { setCompiledTex(tex); setHasPdf(true); uploadPdf.mutate(b64); }}
             onErrors={(errs) => setErrorLines(errs.map((e) => e.line ?? 0).filter((n) => n > 0))}
           />
         </Card>
