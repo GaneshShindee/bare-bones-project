@@ -40,6 +40,8 @@ function WorkspacePage() {
   const [tex, setTex] = useState("");
   const [dirty, setDirty] = useState(false);
   const [errorLines, setErrorLines] = useState<number[]>([]);
+  const [compiledTex, setCompiledTex] = useState<string | null>(null);
+  const [hasPdf, setHasPdf] = useState(false);
 
   useEffect(() => {
     if (q.data && !dirty) setTex(q.data.version.tex_content);
@@ -84,7 +86,6 @@ function WorkspacePage() {
         to: "/send",
         search: { resumeVersionId: id, name: q.data?.version.job_title ?? "", company: q.data?.version.company ?? "" },
       });
-      // Store the draft in sessionStorage so the send page can pick it up if needed.
       try {
         sessionStorage.setItem("resume-studio-email", JSON.stringify({ versionId: id, ...r }));
       } catch { /* ignore */ }
@@ -92,6 +93,19 @@ function WorkspacePage() {
     },
     onError: (e) => toast.error("AI failed", { description: (e as Error).message }),
   });
+
+  const pdfStale = compiledTex !== tex;
+  const onSendClick = () => {
+    if (!hasPdf) {
+      toast.error("Compile the resume first", { description: "Click Compile in the preview to generate resume.pdf." });
+      return;
+    }
+    if (pdfStale) {
+      toast.error("Source changed since last compile", { description: "Re-compile so the newest PDF is attached." });
+      return;
+    }
+    draftEmail.mutate();
+  };
 
   if (q.isLoading || !q.data) {
     return (
@@ -129,8 +143,14 @@ function WorkspacePage() {
           <Button size="sm" variant="outline" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
             <Save className="h-3.5 w-3.5 mr-1" /> {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
           </Button>
-          <Button size="sm" onClick={() => draftEmail.mutate()} disabled={draftEmail.isPending}>
-            <Send className="h-3.5 w-3.5 mr-1" /> {draftEmail.isPending ? "Drafting…" : "Send with email"}
+          <Button
+            size="sm"
+            onClick={onSendClick}
+            disabled={draftEmail.isPending}
+            title={!hasPdf ? "Compile first to generate resume.pdf" : pdfStale ? "Source changed — re-compile before sending" : "Attach the latest PDF and open the email composer"}
+          >
+            <Send className="h-3.5 w-3.5 mr-1" />
+            {draftEmail.isPending ? "Drafting…" : !hasPdf ? "Compile to send" : pdfStale ? "Re-compile to send" : "Send with email"}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => { if (confirm("Delete this version?")) del.mutate(); }}>
             <Trash2 className="h-3.5 w-3.5" />
@@ -164,7 +184,7 @@ function WorkspacePage() {
             filename={q.data.project?.main_tex_filename ?? "resume.tex"}
             downloadName={`${(v.company || "resume").replace(/[^A-Za-z0-9]+/g, "_")}_${(v.job_title || "role").replace(/[^A-Za-z0-9]+/g, "_")}`}
             autoCompile
-            onCompiled={(b64) => uploadPdf.mutate(b64)}
+            onCompiled={(b64) => { setCompiledTex(tex); setHasPdf(true); uploadPdf.mutate(b64); }}
             onErrors={(errs) => setErrorLines(errs.map((e) => e.line ?? 0).filter((n) => n > 0))}
           />
         </Card>
