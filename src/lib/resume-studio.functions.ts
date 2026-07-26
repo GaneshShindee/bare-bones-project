@@ -63,14 +63,13 @@ export const createResumeProject = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => createProjectSchema.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const projectId = crypto.randomUUID();
     const prefix = `${userId}/${projectId}/`;
 
     // Upload main.tex + assets.
     const mainPath = `${prefix}${data.mainTexFilename}`;
-    const mainUp = await supabaseAdmin.storage
+    const mainUp = await context.supabase.storage
       .from("resume-latex")
       .upload(mainPath, new Blob([data.mainTexContent], { type: "application/x-tex" }), {
         contentType: "application/x-tex",
@@ -80,7 +79,7 @@ export const createResumeProject = createServerFn({ method: "POST" })
 
     for (const f of data.extraFiles ?? []) {
       const buf = Buffer.from(f.base64, "base64");
-      const up = await supabaseAdmin.storage
+      const up = await context.supabase.storage
         .from("resume-latex")
         .upload(`${prefix}${f.filename}`, buf, {
           contentType: f.mimeType || "application/octet-stream",
@@ -137,10 +136,9 @@ export const deleteResumeProject = createServerFn({ method: "POST" })
       .eq("user_id", context.userId);
     if (error) throw new Error(error.message);
     if (proj?.storage_prefix) {
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      const { data: list } = await supabaseAdmin.storage.from("resume-latex").list(proj.storage_prefix, { limit: 1000 });
+      const { data: list } = await context.supabase.storage.from("resume-latex").list(proj.storage_prefix, { limit: 1000 });
       if (list && list.length) {
-        await supabaseAdmin.storage
+        await context.supabase.storage
           .from("resume-latex")
           .remove(list.map((f) => `${proj.storage_prefix}${f.name}`));
       }
@@ -159,8 +157,7 @@ export const getResumeProjectMainTex = createServerFn({ method: "GET" })
       .eq("user_id", context.userId)
       .single();
     if (error || !proj) throw new Error(error?.message ?? "Project not found");
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: blob, error: dErr } = await supabaseAdmin.storage
+    const { data: blob, error: dErr } = await context.supabase.storage
       .from("resume-latex")
       .download(`${proj.storage_prefix}${proj.main_tex_filename}`);
     if (dErr || !blob) throw new Error(dErr?.message ?? "Could not read main.tex");
@@ -216,8 +213,7 @@ export const generateResumeVersion = createServerFn({ method: "POST" })
       .single();
     if (error || !proj) throw new Error("Project not found");
 
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: blob, error: dErr } = await supabaseAdmin.storage
+    const { data: blob, error: dErr } = await context.supabase.storage
       .from("resume-latex")
       .download(`${proj.storage_prefix}${proj.main_tex_filename}`);
     if (dErr || !blob) throw new Error(dErr?.message ?? "Could not read main.tex");
@@ -312,8 +308,7 @@ export const getResumeVersion = createServerFn({ method: "GET" })
       .maybeSingle();
     let pdfUrl: string | null = null;
     if (v.pdf_storage_path) {
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      const { data: signed } = await supabaseAdmin.storage
+      const { data: signed } = await context.supabase.storage
         .from("resume-latex")
         .createSignedUrl(v.pdf_storage_path, 60 * 30);
       pdfUrl = signed?.signedUrl ?? null;
@@ -347,10 +342,9 @@ export const uploadResumeVersionPdf = createServerFn({ method: "POST" })
       .eq("user_id", context.userId)
       .single();
     if (!v) throw new Error("Version not found");
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const path = `${context.userId}/${v.project_id}/versions/${v.id}.pdf`;
     const buf = Buffer.from(data.pdfBase64, "base64");
-    const up = await supabaseAdmin.storage
+    const up = await context.supabase.storage
       .from("resume-latex")
       .upload(path, buf, { contentType: "application/pdf", upsert: true });
     if (up.error) throw new Error(up.error.message);
@@ -378,8 +372,7 @@ export const deleteResumeVersion = createServerFn({ method: "POST" })
       .eq("user_id", context.userId);
     if (error) throw new Error(error.message);
     if (v?.pdf_storage_path) {
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-      await supabaseAdmin.storage.from("resume-latex").remove([v.pdf_storage_path]);
+      await context.supabase.storage.from("resume-latex").remove([v.pdf_storage_path]);
     }
     return { ok: true };
   });
