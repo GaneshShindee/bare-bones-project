@@ -95,7 +95,6 @@ function WorkspacePage() {
   });
 
   const pdfStale = compiledTex !== tex;
-  const canSend = hasPdf && !pdfStale;
   const onSendClick = () => {
     if (!hasPdf) {
       toast.error("Compile the resume first", { description: "Click Compile in the preview to generate resume.pdf." });
