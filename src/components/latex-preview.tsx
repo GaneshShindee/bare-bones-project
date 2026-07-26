@@ -66,6 +66,7 @@ export function LatexPreview({
         const bytes = base64ToBytes(data.pdfBase64);
         const blob = new Blob([bytes.slice().buffer], { type: "application/pdf" });
         setPdfBytes(new Uint8Array(bytes));
+        const url = URL.createObjectURL(blob);
         setPdfUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url; });
         setStatus("success");
         setErrors([]);
