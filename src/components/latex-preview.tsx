@@ -184,15 +184,17 @@ export function LatexPreview({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 relative bg-muted/20">
-        {iframeSrc ? (
-          <iframe
-            ref={iframeRef}
-            title="Resume PDF"
-            src={iframeSrc}
-            className="w-full h-full border-0"
-            style={{ transform: rotation ? `rotate(${rotation}deg)` : undefined, transformOrigin: "center center" }}
-          />
+      <div ref={viewerWrapRef} className="flex-1 min-h-0 relative bg-muted/20 overflow-hidden">
+        {pdfBytes ? (
+          <div className="w-full h-full" style={{ transform: rotation && fitMode !== "custom" ? undefined : undefined }}>
+            <PdfViewer
+              data={pdfBytes}
+              zoom={zoom}
+              fitMode={fitMode}
+              rotation={rotation}
+              containerWidth={containerWidth}
+            />
+          </div>
         ) : (
           <div className="h-full grid place-items-center text-center p-6">
             <div>
