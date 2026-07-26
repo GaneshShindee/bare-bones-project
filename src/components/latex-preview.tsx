@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Loader2, RefreshCw, Download, FileText, AlertTriangle, CheckCircle2,
   ZoomIn, ZoomOut, Maximize2, Printer, RotateCw,
 } from "lucide-react";
+import { PdfViewer } from "@/components/pdf-viewer";
 
 type CompileError = { line: number | null; message: string; suggestion?: string };
 type CompileResponse =
