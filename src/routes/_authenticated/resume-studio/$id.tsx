@@ -144,8 +144,14 @@ function WorkspacePage() {
           <Button size="sm" variant="outline" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
             <Save className="h-3.5 w-3.5 mr-1" /> {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
           </Button>
-          <Button size="sm" onClick={() => draftEmail.mutate()} disabled={draftEmail.isPending}>
-            <Send className="h-3.5 w-3.5 mr-1" /> {draftEmail.isPending ? "Drafting…" : "Send with email"}
+          <Button
+            size="sm"
+            onClick={onSendClick}
+            disabled={draftEmail.isPending}
+            title={!hasPdf ? "Compile first to generate resume.pdf" : pdfStale ? "Source changed — re-compile before sending" : "Attach the latest PDF and open the email composer"}
+          >
+            <Send className="h-3.5 w-3.5 mr-1" />
+            {draftEmail.isPending ? "Drafting…" : !hasPdf ? "Compile to send" : pdfStale ? "Re-compile to send" : "Send with email"}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => { if (confirm("Delete this version?")) del.mutate(); }}>
             <Trash2 className="h-3.5 w-3.5" />
