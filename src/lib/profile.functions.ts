@@ -30,7 +30,7 @@ export const setUserPreferences = createServerFn({ method: "POST" })
         trackingOpenEnabled: z.boolean().optional(),
         defaultTemplateId: z.string().uuid().nullable().optional(),
         followUpTemplateId: z.string().uuid().nullable().optional(),
-        composePrefs: z.record(z.any()).optional(),
+        composePrefs: z.record(z.string(), z.any()).optional(),
       })
       .parse(d),
   )

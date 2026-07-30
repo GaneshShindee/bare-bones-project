@@ -220,20 +220,37 @@ export const generateResumeVersion = createServerFn({ method: "POST" })
     const originalTex = await blob.text();
 
     const sys = [
-      "You are an expert resume editor working on a LaTeX source file.",
-      "STRICT RULES:",
-      "- NEVER fabricate experience, companies, projects, internships, skills, certifications, or achievements.",
-      "- Preserve the LaTeX layout, packages, fonts, colors, margins, spacing, tables, icons, and every command exactly.",
-      "- Only rewrite textual content inside sections (bullet points, summaries, wording).",
-      "- You MAY reorder existing projects/skills/bullets, and emphasize technologies already present in the source.",
-      "- If the JD mentions a technology the user doesn't already have in the resume, do NOT add it. Include it in `missing_keywords` instead.",
-      "- Keep every \\usepackage, \\newcommand, \\begin/\\end block, and preamble byte-for-byte unless the change is unavoidable.",
-      "- Return STRICT JSON only, no markdown, no prose:",
+      "You are a senior technical recruiter AND an expert LaTeX resume editor.",
+      "GOAL: rewrite the resume so it feels hand-crafted for THIS role, while remaining 100% truthful.",
+      "",
+      "STEP 1 — Analyse the JD. Extract: role focus, required skills, technologies, responsibilities, preferred experience, ATS keywords, soft skills, tools.",
+      "STEP 2 — Analyse the ORIGINAL resume. Identify which existing experience/projects/skills actually map to the JD.",
+      "STEP 3 — Optimise. Rewrite ONLY textual content (bullets, summary, project descriptions, skill ordering) so that the most relevant existing experience is emphasised first, using JD vocabulary the candidate can honestly claim.",
+      "",
+      "TRUTHFULNESS RULES (hard constraints):",
+      "- NEVER fabricate: no invented companies, internships, projects, certifications, technologies, tools, dates, metrics, or achievements.",
+      "- If the JD mentions a technology the candidate does NOT already have in the resume, DO NOT add it to the resume. Put it in `missing_keywords` instead.",
+      "- You MAY reframe an existing project to highlight adjacent relevance (e.g. \"scalable backend with AI-assisted search where applicable\") ONLY when the original scope genuinely supports it. When unsure, keep the original wording.",
+      "- You MAY reorder projects, bullets and skills, and promote already-present keywords.",
+      "- Preserve any measurable outcome the resume already contains; do not invent new numbers.",
+      "",
+      "WRITING STYLE:",
+      "- Simple, recruiter-friendly, ATS-optimised English. Short sentences. Strong action verbs. Concise (avoid long paragraphs).",
+      "- Prefer: \"Designed and shipped X using Y, improving Z by N%\" (only when N is already supported).",
+      "- Avoid AI clichés and vague filler (\"leveraged synergies\", \"passionate about cutting-edge\", etc.).",
+      "",
+      "FORMATTING RULES (hard constraints):",
+      "- Return the FULL .tex file back. Preserve every \\usepackage, \\newcommand, \\begin/\\end, packages, fonts, colors, margins, spacing, tables, icons byte-for-byte.",
+      "- Only edit the *textual* content inside sections. Do NOT restructure LaTeX, do NOT add or remove packages, do NOT change document class.",
+      "",
+      "Return STRICT JSON only, no markdown, no prose:",
       `  {"tex":"<full updated .tex file>","ats_score":<0-100>,"matched_keywords":[...],"missing_keywords":[...],"strengths":[...],"suggestions":[...]}`,
     ].join("\n");
     const user = [
       `JOB DESCRIPTION:\n${data.jobDescription}`,
-      data.customInstructions ? `\n\nCUSTOM INSTRUCTIONS:\n${data.customInstructions}` : "",
+      data.jobTitle ? `\n\nTARGET ROLE: ${data.jobTitle}` : "",
+      data.company ? `\nTARGET COMPANY: ${data.company}` : "",
+      data.customInstructions ? `\n\nCUSTOM INSTRUCTIONS (respect while still following the truthfulness rules):\n${data.customInstructions}` : "",
       `\n\nORIGINAL resume.tex (do NOT change formatting, only content):\n\n${originalTex}`,
     ].join("");
 
@@ -381,6 +398,7 @@ const emailFromResumeSchema = z.object({
   versionId: z.string().uuid(),
   senderName: z.string().max(120).optional().nullable(),
   extraInstructions: z.string().max(2000).optional().nullable(),
+  templateId: z.string().uuid().optional().nullable(),
 });
 
 export const generateApplicationEmail = createServerFn({ method: "POST" })
@@ -396,8 +414,41 @@ export const generateApplicationEmail = createServerFn({ method: "POST" })
       .eq("user_id", context.userId)
       .single();
     if (error || !v) throw new Error("Version not found");
-    const sys = "You draft short, sincere job application emails. Return STRICT JSON: {\"subject\":\"...\",\"body\":\"...\"}. Under 180 words. Do not invent facts.";
-    const user = `Sender: ${data.senderName ?? "The applicant"}\nJob title: ${v.job_title ?? ""}\nCompany: ${v.company ?? ""}\nJD:\n${v.job_description.slice(0, 3000)}${data.extraInstructions ? `\n\nExtra:\n${data.extraInstructions}` : ""}\n\nResume LaTeX excerpt (for facts only, do not quote LaTeX):\n${v.tex_content.slice(0, 6000)}`;
+
+    // Load the selected (or default) template, if any, so we can preserve ~90% of its structure.
+    let templateSubject = "";
+    let templateBody = "";
+    let templateName = "";
+    const tplQuery = context.supabase
+      .from("templates")
+      .select("name, subject, body, is_default")
+      .eq("user_id", context.userId);
+    const { data: tpl } = data.templateId
+      ? await tplQuery.eq("id", data.templateId).maybeSingle()
+      : await tplQuery.eq("is_default", true).maybeSingle();
+    if (tpl) { templateName = tpl.name; templateSubject = tpl.subject ?? ""; templateBody = tpl.body ?? ""; }
+
+    const sys = [
+      "You customise an EXISTING job-application email template for a specific role.",
+      "STRICT RULES:",
+      "- Preserve ~90% of the template exactly (structure, tone, paragraphs, sign-off, {{variables}} like {{name}}/{{company}}). Only modify ~10% to make it relevant.",
+      "- Do NOT rewrite the greeting; personalisation happens at send-time.",
+      "- Never invent facts. Only reference experience already present in the RESUME.",
+      "- Concise (100–150 words unless the user asks for more). Simple, professional, recruiter-friendly. Avoid AI clichés.",
+      "- If NO template is supplied, write a short professional email from scratch (100–150 words) using {{name}} for the greeting placeholder.",
+      "- Return STRICT JSON only: {\"subject\":\"...\",\"body\":\"...\"}",
+    ].join("\n");
+    const user = [
+      templateBody || templateSubject
+        ? `SELECTED TEMPLATE (name: ${templateName || "(untitled)"}):\nSUBJECT: ${templateSubject}\n---\nBODY:\n${templateBody}`
+        : "NO TEMPLATE — write from scratch.",
+      `Sender: ${data.senderName ?? "The applicant"}`,
+      `Role: ${v.job_title ?? ""}`,
+      `Company: ${v.company ?? ""}`,
+      `JD (context only):\n${(v.job_description ?? "").slice(0, 4000)}`,
+      data.extraInstructions ? `USER'S ADDITIONAL INSTRUCTIONS (highest priority, still respect the 90/10 rule):\n${data.extraInstructions}` : "",
+      `RESUME (LaTeX, factual reference only — do not quote LaTeX):\n${v.tex_content.slice(0, 6000)}`,
+    ].filter(Boolean).join("\n\n");
     const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -414,14 +465,16 @@ export const generateApplicationEmail = createServerFn({ method: "POST" })
     if (!m) throw new Error("AI returned invalid JSON");
     const parsed = JSON.parse(m[0]) as { subject?: string; body?: string };
     return {
-      subject: (parsed.subject ?? `Application: ${v.job_title ?? "Role"}${v.company ? ` at ${v.company}` : ""}`).trim(),
-      body: (parsed.body ?? "").trim(),
+      subject: (parsed.subject ?? templateSubject ?? `Application: ${v.job_title ?? "Role"}${v.company ? ` at ${v.company}` : ""}`).trim(),
+      body: (parsed.body ?? templateBody ?? "").trim(),
     };
   });
+
 
 const sectionSchema = z.object({
   id: z.string().uuid(),
   section: z.enum(["summary", "experience", "projects", "skills", "ats"]),
+  instructions: z.string().max(2000).optional().nullable(),
 });
 export const improveResumeSection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -431,19 +484,35 @@ export const improveResumeSection = createServerFn({ method: "POST" })
     if (!key) throw new Error("AI gateway not configured");
     const { data: v } = await context.supabase
       .from("resume_versions")
-      .select("tex_content, job_description")
+      .select("tex_content, job_description, job_title, company, custom_instructions")
       .eq("id", data.id)
       .eq("user_id", context.userId)
       .single();
     if (!v) throw new Error("Version not found");
     const focus =
       data.section === "summary" ? "the professional summary / objective section" :
-      data.section === "experience" ? "the work experience bullets" :
-      data.section === "projects" ? "the projects section bullets" :
-      data.section === "skills" ? "the skills section ordering / emphasis" :
-      "keyword coverage across the whole document for ATS";
-    const sys = "You improve ONE section of a LaTeX resume. Return STRICT JSON {\"tex\":\"<full updated file>\"}. Preserve every LaTeX command, package, layout. Never invent facts. Only rewrite words already grounded in the resume's existing content.";
-    const user = `Improve ${focus}. JD context:\n${(v.job_description ?? "").slice(0, 3000)}\n\nCurrent LaTeX (return the FULL file back):\n${v.tex_content}`;
+      data.section === "experience" ? "the work experience bullets (rewrite bullets for clarity, impact, and ATS keyword coverage — reorder by relevance to the JD)" :
+      data.section === "projects" ? "the projects section (rewrite descriptions for JD alignment, add measurable impact ONLY if already grounded, reorder bullets by relevance, keep it concise, highlight most relevant technologies)" :
+      data.section === "skills" ? "the skills section — reorder and re-group so the JD-relevant, honestly-held skills appear first; do not add skills the resume does not already list" :
+      "keyword coverage across the WHOLE document for ATS — surface honestly-held keywords already present, do not add anything the resume cannot support";
+    const sys = [
+      "You improve ONE section of a LaTeX resume with the mindset of a senior technical recruiter.",
+      "HARD RULES:",
+      "- Return the FULL updated .tex file. Preserve every LaTeX command, package, layout, spacing byte-for-byte outside the target section.",
+      "- Never invent experience, companies, tools, metrics, projects, or certifications. Only reword or reorder content grounded in the CURRENT resume.",
+      "- Optimise for the target role using JD vocabulary the candidate can honestly claim.",
+      "- Simple, recruiter-friendly, ATS-optimised English. Short sentences. Strong action verbs. Avoid AI clichés.",
+      "- Return STRICT JSON only: {\"tex\":\"<full updated file>\"}",
+    ].join("\n");
+    const user = [
+      `SECTION TO IMPROVE: ${focus}`,
+      v.job_title ? `TARGET ROLE: ${v.job_title}` : "",
+      v.company ? `TARGET COMPANY: ${v.company}` : "",
+      `JD CONTEXT:\n${(v.job_description ?? "").slice(0, 4000)}`,
+      v.custom_instructions ? `EXISTING CUSTOM INSTRUCTIONS:\n${v.custom_instructions}` : "",
+      data.instructions ? `USER'S ADDITIONAL INSTRUCTIONS (highest priority, still respect truthfulness):\n${data.instructions}` : "",
+      `FULL CURRENT LaTeX (return the FULL file back):\n${v.tex_content}`,
+    ].filter(Boolean).join("\n\n");
     const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },

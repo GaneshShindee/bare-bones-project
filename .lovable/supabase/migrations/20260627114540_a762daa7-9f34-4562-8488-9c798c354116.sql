@@ -1,0 +1,4 @@
+
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
+ALTER FUNCTION public.touch_updated_at() SECURITY INVOKER;
+REVOKE EXECUTE ON FUNCTION public.touch_updated_at() FROM PUBLIC, anon, authenticated;

@@ -164,7 +164,7 @@ const sendSchema = z.object({
     .optional(),
   subject: z.string().min(1).max(998),
   body: z.string().min(1).max(100_000),
-  variables: z.record(z.string()).optional(),
+  variables: z.record(z.string(), z.string()).optional(),
   resumeIds: z.array(z.string().uuid()).max(10).optional(),
   uploads: z.array(z.object({
     filename: z.string().min(1).max(255),

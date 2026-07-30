@@ -9,6 +9,8 @@ import {
   improveResumeSection,
   generateApplicationEmail,
 } from "@/lib/resume-studio.functions";
+import { getUserPreferences } from "@/lib/profile.functions";
+import { resumeFileBaseName } from "@/lib/naming";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,8 +37,10 @@ function WorkspacePage() {
   const delFn = useServerFn(deleteResumeVersion);
   const improveFn = useServerFn(improveResumeSection);
   const emailFn = useServerFn(generateApplicationEmail);
+  const prefsFn = useServerFn(getUserPreferences);
 
   const q = useQuery({ queryKey: ["resume-version", id], queryFn: () => getFn({ data: { id } }) });
+  const prefs = useQuery({ queryKey: ["user-prefs"], queryFn: () => prefsFn() });
   const [tex, setTex] = useState("");
   const [dirty, setDirty] = useState(false);
   const [errorLines, setErrorLines] = useState<number[]>([]);
@@ -182,7 +186,7 @@ function WorkspacePage() {
           <LatexPreview
             tex={tex}
             filename={q.data.project?.main_tex_filename ?? "resume.tex"}
-            downloadName={`${(v.company || "resume").replace(/[^A-Za-z0-9]+/g, "_")}_${(v.job_title || "role").replace(/[^A-Za-z0-9]+/g, "_")}`}
+            downloadName={resumeFileBaseName({ fullName: prefs.data?.fullName ?? null, email: prefs.data?.email ?? null, company: v.company ?? null })}
             autoCompile
             onCompiled={(b64) => { setCompiledTex(tex); setHasPdf(true); uploadPdf.mutate(b64); }}
             onErrors={(errs) => setErrorLines(errs.map((e) => e.line ?? 0).filter((n) => n > 0))}

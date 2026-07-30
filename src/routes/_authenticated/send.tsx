@@ -194,7 +194,7 @@ function SendPage() {
     onError: (e) => toast.error("Send failed", { description: (e as Error).message }),
   });
 
-  // Auto-attach a generated resume version when arriving from Resume Studio.
+  // Auto-attach the compiled PDF from Resume Studio. Only attach PDFs — never .tex.
   const getVersionFn = useServerFn(getResumeVersion);
   useEffect(() => {
     if (!search.resumeVersionId) return;
@@ -203,30 +203,33 @@ function SendPage() {
       try {
         const r = await getVersionFn({ data: { id: search.resumeVersionId! } });
         if (cancelled) return;
-        // Attach as an inline upload (temporary) so the user can review/replace.
-        const filename = `${(r.version.company || r.version.job_title || "resume").replace(/[^A-Za-z0-9._-]+/g, "_")}.tex`;
-        const blob = new Blob([r.version.tex_content], { type: "application/x-tex" });
-        const file = new File([blob], filename, { type: "application/x-tex" });
-        setUploads((u) => (u.some((x) => x.name === file.name) ? u : [...u, file]));
-        // If a PDF was compiled and uploaded to storage, prefer that.
-        if (r.pdfUrl) {
-          try {
-            const resp = await fetch(r.pdfUrl);
-            const buf = await resp.arrayBuffer();
-            const pdf = new File(
-              [buf],
-              filename.replace(/\.tex$/, ".pdf"),
-              { type: "application/pdf" },
-            );
-            setUploads((u) => (u.some((x) => x.name === pdf.name) ? u : [...u, pdf]));
-          } catch { /* ignore, .tex still attached */ }
+        if (!r.pdfUrl) {
+          toast.error("No compiled PDF for this resume yet", {
+            description: "Open the resume in Resume Studio and click Compile before sending.",
+          });
+          return;
+        }
+        const { resumePdfName } = await import("@/lib/naming");
+        const pdfName = resumePdfName({
+          fullName: prefs.data?.fullName ?? null,
+          email: prefs.data?.email ?? null,
+          company: r.version.company ?? null,
+        });
+        try {
+          const resp = await fetch(r.pdfUrl);
+          const buf = await resp.arrayBuffer();
+          if (!buf.byteLength) throw new Error("Empty PDF");
+          const pdf = new File([buf], pdfName, { type: "application/pdf" });
+          setUploads((u) => (u.some((x) => x.name === pdf.name) ? u : [...u, pdf]));
+        } catch (err) {
+          toast.error("Could not attach the compiled PDF", { description: (err as Error).message });
         }
       } catch (e) {
         toast.error("Could not load resume", { description: (e as Error).message });
       }
     })();
     return () => { cancelled = true; };
-  }, [search.resumeVersionId, getVersionFn]);
+  }, [search.resumeVersionId, getVersionFn, prefs.data]);
 
   if (accounts.data && accounts.data.length === 0) {
     return (
