@@ -474,7 +474,8 @@ export const generateApplicationEmail = createServerFn({ method: "POST" })
 const sectionSchema = z.object({
   id: z.string().uuid(),
   section: z.enum(["summary", "experience", "projects", "skills", "ats"]),
-  instructions: z.string().max(2000).optional().nullable(),
+  instructions: z.string().max(4000).optional().nullable(),
+  jobDescription: z.string().max(50_000).optional().nullable(),
 });
 export const improveResumeSection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
