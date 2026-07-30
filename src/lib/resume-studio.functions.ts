@@ -509,7 +509,7 @@ export const improveResumeSection = createServerFn({ method: "POST" })
       `SECTION TO IMPROVE: ${focus}`,
       v.job_title ? `TARGET ROLE: ${v.job_title}` : "",
       v.company ? `TARGET COMPANY: ${v.company}` : "",
-      `JD CONTEXT:\n${(v.job_description ?? "").slice(0, 4000)}`,
+      `JD CONTEXT:\n${(data.jobDescription || v.job_description || "").slice(0, 6000)}`,
       v.custom_instructions ? `EXISTING CUSTOM INSTRUCTIONS:\n${v.custom_instructions}` : "",
       data.instructions ? `USER'S ADDITIONAL INSTRUCTIONS (highest priority, still respect truthfulness):\n${data.instructions}` : "",
       `FULL CURRENT LaTeX (return the FULL file back):\n${v.tex_content}`,
