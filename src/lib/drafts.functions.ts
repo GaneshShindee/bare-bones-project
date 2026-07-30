@@ -25,7 +25,7 @@ export type EmailDraft = {
   role: string;
   job_description: string;
   instructions: string;
-  metadata: Record<string, unknown>;
+  metadata: Record<string, string | number | boolean | null>;
   created_at: string;
   updated_at: string;
 };
@@ -57,7 +57,7 @@ const draftSchema = z.object({
   role: z.string().max(300).default(""),
   jobDescription: z.string().max(50_000).default(""),
   instructions: z.string().max(8000).default(""),
-  metadata: z.record(z.string(), z.unknown()).default({}),
+  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
 });
 
 export const listEmailDrafts = createServerFn({ method: "GET" })
