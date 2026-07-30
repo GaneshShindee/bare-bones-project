@@ -534,3 +534,139 @@ export const improveResumeSection = createServerFn({ method: "POST" })
     await context.supabase.from("resume_versions").update({ tex_content: tex }).eq("id", data.id);
     return { tex };
   });
+
+const updateWithInstructionsSchema = z.object({
+  id: z.string().uuid(),
+  instructions: z.string().trim().min(3).max(6000),
+  jobDescription: z.string().max(50_000).optional().nullable(),
+});
+
+/** Improve the WHOLE resume according to free-form user instructions. */
+export const updateResumeWithInstructions = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => updateWithInstructionsSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("AI gateway not configured");
+    const { data: v } = await context.supabase
+      .from("resume_versions")
+      .select("tex_content, job_description, job_title, company")
+      .eq("id", data.id)
+      .eq("user_id", context.userId)
+      .single();
+    if (!v) throw new Error("Version not found");
+
+    const { buildProfileContext } = await import("./user-profile.server");
+    const profile = await buildProfileContext(context.supabase, context.userId);
+
+    const sys = [
+      "You are an expert LaTeX resume editor and senior technical recruiter.",
+      "HARD RULES:",
+      "- Return the FULL updated .tex file. Preserve the document class, packages, macros, layout and spacing exactly; change textual content only.",
+      "- NEVER fabricate experience, employers, dates, projects, tools, certifications, education or metrics.",
+      "- You may only use facts already present in the CURRENT RESUME or in the CANDIDATE PROFILE. If something is missing, omit it.",
+      "- Follow the USER INSTRUCTIONS as closely as truthfulness allows.",
+      "- Simple, recruiter-friendly, ATS-optimised English. Avoid AI clichés.",
+      "- Return STRICT JSON only: {\"tex\":\"<full updated file>\",\"notes\":\"<one short sentence>\"}",
+    ].join("\n");
+    const user = [
+      `USER INSTRUCTIONS:\n${data.instructions}`,
+      v.job_title ? `TARGET ROLE: ${v.job_title}` : "",
+      v.company ? `TARGET COMPANY: ${v.company}` : "",
+      (data.jobDescription || v.job_description)
+        ? `JOB DESCRIPTION:\n${(data.jobDescription || v.job_description || "").slice(0, 6000)}`
+        : "",
+      profile ? `CANDIDATE PROFILE (source of truth — never go beyond it):\n${profile}` : "",
+      `CURRENT LaTeX (return the FULL file back):\n${v.tex_content}`,
+    ].filter(Boolean).join("\n\n");
+
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (res.status === 429) throw new Error("AI rate limit reached. Try again shortly.");
+    if (res.status === 402) throw new Error("AI credits exhausted.");
+    if (!res.ok) throw new Error(`AI error ${res.status}`);
+    const j = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const c = j.choices?.[0]?.message?.content ?? "";
+    const m = c.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("AI returned invalid JSON");
+    const parsed = JSON.parse(m[0]) as { tex?: string; notes?: string };
+    const tex = (parsed.tex ?? "").trim();
+    if (!tex.includes("\\")) throw new Error("AI did not return valid LaTeX");
+    await context.supabase.from("resume_versions").update({ tex_content: tex }).eq("id", data.id).eq("user_id", context.userId);
+    return { tex, notes: parsed.notes ?? "" };
+  });
+
+const rewriteSelectionSchema = z.object({
+  id: z.string().uuid().optional().nullable(),
+  selection: z.string().min(1).max(20_000),
+  instructions: z.string().trim().min(2).max(4000),
+  jobDescription: z.string().max(50_000).optional().nullable(),
+  context: z.string().max(20_000).optional().nullable(),
+});
+
+/** Cursor-style inline edit: rewrite ONLY the selected LaTeX range. */
+export const rewriteResumeSelection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => rewriteSelectionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("AI gateway not configured");
+
+    let jd = data.jobDescription ?? "";
+    if (data.id) {
+      const { data: v } = await context.supabase
+        .from("resume_versions")
+        .select("job_description, job_title, company")
+        .eq("id", data.id)
+        .eq("user_id", context.userId)
+        .maybeSingle();
+      if (v && !jd) jd = v.job_description ?? "";
+    }
+    const { buildProfileContext } = await import("./user-profile.server");
+    const profile = await buildProfileContext(context.supabase, context.userId);
+
+    const sys = [
+      "You rewrite ONE selected fragment of a LaTeX resume.",
+      "HARD RULES:",
+      "- Return ONLY the replacement for the SELECTED FRAGMENT. Do not return the whole document, no markdown fences, no commentary.",
+      "- Keep the same LaTeX structure/commands the fragment already uses so it still compiles inside the document.",
+      "- NEVER fabricate facts. Only reword, tighten, reorder, or emphasise what the fragment / profile already supports.",
+      "- Simple, recruiter-friendly, ATS-optimised English.",
+      "- Return STRICT JSON only: {\"replacement\":\"<latex>\"}",
+    ].join("\n");
+    const user = [
+      `USER INSTRUCTIONS:\n${data.instructions}`,
+      jd ? `JOB DESCRIPTION:\n${jd.slice(0, 5000)}` : "",
+      profile ? `CANDIDATE PROFILE (facts you may rely on):\n${profile}` : "",
+      data.context ? `SURROUNDING DOCUMENT (context only, do not return):\n${data.context.slice(0, 6000)}` : "",
+      `SELECTED FRAGMENT (rewrite exactly this):\n${data.selection}`,
+    ].filter(Boolean).join("\n\n");
+
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (res.status === 429) throw new Error("AI rate limit reached. Try again shortly.");
+    if (res.status === 402) throw new Error("AI credits exhausted.");
+    if (!res.ok) throw new Error(`AI error ${res.status}`);
+    const j = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const c = j.choices?.[0]?.message?.content ?? "";
+    const m = c.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("AI returned invalid JSON");
+    const parsed = JSON.parse(m[0]) as { replacement?: string };
+    const replacement = (parsed.replacement ?? "").replace(/^```[a-z]*\n?|```$/g, "").trim();
+    if (!replacement) throw new Error("AI returned an empty replacement");
+    return { replacement };
+  });
