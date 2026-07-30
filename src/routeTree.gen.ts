@@ -18,6 +18,7 @@ import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedSendRouteImport } from './routes/_authenticated/send'
 import { Route as AuthenticatedResumesRouteImport } from './routes/_authenticated/resumes'
 import { Route as AuthenticatedRepliesRouteImport } from './routes/_authenticated/replies'
+import { Route as AuthenticatedProfileRouteImport } from './routes/_authenticated/profile'
 import { Route as AuthenticatedNotificationsRouteImport } from './routes/_authenticated/notifications'
 import { Route as AuthenticatedJobsRouteImport } from './routes/_authenticated/jobs'
 import { Route as AuthenticatedHistoryRouteImport } from './routes/_authenticated/history'
@@ -75,6 +76,11 @@ const AuthenticatedResumesRoute = AuthenticatedResumesRouteImport.update({
 const AuthenticatedRepliesRoute = AuthenticatedRepliesRouteImport.update({
   id: '/replies',
   path: '/replies',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedProfileRoute = AuthenticatedProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedNotificationsRoute =
@@ -163,6 +169,7 @@ export interface FileRoutesByFullPath {
   '/history': typeof AuthenticatedHistoryRoute
   '/jobs': typeof AuthenticatedJobsRoute
   '/notifications': typeof AuthenticatedNotificationsRoute
+  '/profile': typeof AuthenticatedProfileRoute
   '/replies': typeof AuthenticatedRepliesRoute
   '/resumes': typeof AuthenticatedResumesRoute
   '/send': typeof AuthenticatedSendRoute
@@ -187,6 +194,7 @@ export interface FileRoutesByTo {
   '/history': typeof AuthenticatedHistoryRoute
   '/jobs': typeof AuthenticatedJobsRoute
   '/notifications': typeof AuthenticatedNotificationsRoute
+  '/profile': typeof AuthenticatedProfileRoute
   '/replies': typeof AuthenticatedRepliesRoute
   '/resumes': typeof AuthenticatedResumesRoute
   '/send': typeof AuthenticatedSendRoute
@@ -213,6 +221,7 @@ export interface FileRoutesById {
   '/_authenticated/history': typeof AuthenticatedHistoryRoute
   '/_authenticated/jobs': typeof AuthenticatedJobsRoute
   '/_authenticated/notifications': typeof AuthenticatedNotificationsRoute
+  '/_authenticated/profile': typeof AuthenticatedProfileRoute
   '/_authenticated/replies': typeof AuthenticatedRepliesRoute
   '/_authenticated/resumes': typeof AuthenticatedResumesRoute
   '/_authenticated/send': typeof AuthenticatedSendRoute
@@ -239,6 +248,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/jobs'
     | '/notifications'
+    | '/profile'
     | '/replies'
     | '/resumes'
     | '/send'
@@ -263,6 +273,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/jobs'
     | '/notifications'
+    | '/profile'
     | '/replies'
     | '/resumes'
     | '/send'
@@ -288,6 +299,7 @@ export interface FileRouteTypes {
     | '/_authenticated/history'
     | '/_authenticated/jobs'
     | '/_authenticated/notifications'
+    | '/_authenticated/profile'
     | '/_authenticated/replies'
     | '/_authenticated/resumes'
     | '/_authenticated/send'
@@ -377,6 +389,13 @@ declare module '@tanstack/react-router' {
       path: '/replies'
       fullPath: '/replies'
       preLoaderRoute: typeof AuthenticatedRepliesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/profile': {
+      id: '/_authenticated/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof AuthenticatedProfileRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/notifications': {
@@ -487,6 +506,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedHistoryRoute: typeof AuthenticatedHistoryRoute
   AuthenticatedJobsRoute: typeof AuthenticatedJobsRoute
   AuthenticatedNotificationsRoute: typeof AuthenticatedNotificationsRoute
+  AuthenticatedProfileRoute: typeof AuthenticatedProfileRoute
   AuthenticatedRepliesRoute: typeof AuthenticatedRepliesRoute
   AuthenticatedResumesRoute: typeof AuthenticatedResumesRoute
   AuthenticatedSendRoute: typeof AuthenticatedSendRoute
@@ -505,6 +525,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedHistoryRoute: AuthenticatedHistoryRoute,
   AuthenticatedJobsRoute: AuthenticatedJobsRoute,
   AuthenticatedNotificationsRoute: AuthenticatedNotificationsRoute,
+  AuthenticatedProfileRoute: AuthenticatedProfileRoute,
   AuthenticatedRepliesRoute: AuthenticatedRepliesRoute,
   AuthenticatedResumesRoute: AuthenticatedResumesRoute,
   AuthenticatedSendRoute: AuthenticatedSendRoute,
