@@ -43,12 +43,10 @@ export function LatexPreview({
   const lastTexRef = useRef<string>("");
   const inflightRef = useRef<AbortController | null>(null);
 
-  const baseName = useMemo(() => {
-    const raw = (downloadName ?? filename).replace(/\.(tex|pdf)$/i, "");
-    return raw || "resume";
+  const pdfDownloadName = useMemo(() => {
+    const base = (downloadName ?? filename).replace(/\.tex$/i, "");
+    return `${base || "resume"}.pdf`;
   }, [downloadName, filename]);
-  const pdfDownloadName = `${baseName}.pdf`;
-  const texDownloadName = `${baseName}.tex`;
 
   const compile = useCallback(async () => {
     if (!tex.trim()) return;
@@ -105,30 +103,22 @@ export function LatexPreview({
     return `${pdfUrl}#zoom=${zoomParam}&toolbar=1&navpanes=0`;
   }, [pdfUrl, zoom, fitMode]);
 
-  const triggerDownload = (blob: Blob, name: string) => {
-    if (!blob.size) return false;
-    const url = URL.createObjectURL(blob);
+  const downloadPdf = () => {
+    if (!pdfUrl) return;
     const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.rel = "noopener";
+    a.href = pdfUrl;
+    a.download = pdfDownloadName;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return true;
-  };
-
-  const downloadPdf = () => {
-    if (!pdfBytes || !pdfBytes.length) return;
-    const blob = new Blob([pdfBytes.slice().buffer], { type: "application/pdf" });
-    triggerDownload(blob, pdfDownloadName);
   };
 
   const downloadTex = () => {
-    if (!tex.trim()) return;
-    const blob = new Blob([tex], { type: "application/x-tex;charset=utf-8" });
-    triggerDownload(blob, texDownloadName);
+    const blob = new Blob([tex], { type: "application/x-tex" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
   };
 
   const print = () => {

@@ -1,37 +1,17 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef } from "react";
 
-export type EditorSelection = {
-  text: string;
-  /** 0-based character offsets into the document. */
-  start: number;
-  end: number;
-  /** Viewport position of the selection end, for anchoring a floating toolbar. */
-  top: number;
-  left: number;
-};
-
-export type LatexEditorApi = {
-  /** Replace a character range and select the inserted text. */
-  replaceRange: (start: number, end: number, text: string) => void;
-  focus: () => void;
-};
-
 export function LatexEditor({
   value,
   onChange,
   height = "100%",
   errorLines = [],
-  onSelectionChange,
-  onReady,
 }: {
   value: string;
   onChange: (v: string) => void;
   height?: string | number;
   /** Line numbers (1-based) to mark as errors in the gutter. */
   errorLines?: number[];
-  onSelectionChange?: (sel: EditorSelection | null) => void;
-  onReady?: (api: LatexEditorApi) => void;
 }) {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
@@ -72,43 +52,6 @@ export function LatexEditor({
       onMount={(editor, monaco) => {
         editorRef.current = editor;
         monacoRef.current = monaco;
-        onReady?.({
-          replaceRange: (start, end, text) => {
-            const model = editor.getModel();
-            if (!model) return;
-            const range = monaco.Range.fromPositions(
-              model.getPositionAt(start),
-              model.getPositionAt(end),
-            );
-            editor.executeEdits("ask-ai", [{ range, text, forceMoveMarkers: true }]);
-            editor.pushUndoStop();
-          },
-          focus: () => editor.focus(),
-        });
-        if (onSelectionChange) {
-          editor.onDidChangeCursorSelection(() => {
-            const model = editor.getModel();
-            const sel = editor.getSelection();
-            if (!model || !sel || sel.isEmpty()) {
-              onSelectionChange(null);
-              return;
-            }
-            const text = model.getValueInRange(sel);
-            if (!text.trim()) {
-              onSelectionChange(null);
-              return;
-            }
-            const endPos = sel.getEndPosition();
-            const coords = editor.getScrolledVisiblePosition(endPos);
-            onSelectionChange({
-              text,
-              start: model.getOffsetAt(sel.getStartPosition()),
-              end: model.getOffsetAt(endPos),
-              top: coords?.top ?? 0,
-              left: coords?.left ?? 0,
-            });
-          });
-        }
       }}
       beforeMount={(monaco) => {
         const langs = monaco.languages.getLanguages();
