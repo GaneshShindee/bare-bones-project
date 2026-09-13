@@ -1,5 +1,5 @@
 import { Link, useRouterState, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, LayoutTemplate, Send, History, Settings, LogOut, FileText, BarChart3, Inbox, Bell, Wand2, Briefcase, ListChecks } from "lucide-react";
+import { LayoutDashboard, LayoutTemplate, Send, History, Settings, LogOut, FileText, BarChart3, Inbox, Bell, Wand2, Briefcase, ListChecks, UserRound } from "lucide-react";
 import logoAsset from "@/assets/logo.png.asset.json";
 import {
   Sidebar,
@@ -16,9 +16,11 @@ import {
 } from "@/components/ui/sidebar";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 
 const items = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Profile", url: "/profile", icon: UserRound },
   { title: "Jobs", url: "/jobs", icon: Briefcase },
   { title: "My Templates", url: "/templates", icon: LayoutTemplate },
   { title: "Resumes", url: "/resumes", icon: FileText },
@@ -33,7 +35,7 @@ const items = [
 ];
 
 export function AppSidebar() {
-  const { state } = useSidebar();
+  const { state, isMobile, setOpenMobile } = useSidebar();
   const collapsed = state === "collapsed";
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const navigate = useNavigate();
@@ -46,25 +48,46 @@ export function AppSidebar() {
     navigate({ to: "/auth", replace: true });
   };
 
+  const closeMobile = () => {
+    if (isMobile) setOpenMobile(false);
+  };
+
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <div className="flex items-center gap-2 px-2 py-1.5">
-          <img src={logoAsset.url} alt="Logo" className="h-8 w-8 shrink-0 rounded-lg" />
-          {!collapsed && <div className="font-semibold text-sm">Email Sender</div>}
+      <SidebarHeader className="px-3 pt-3 pb-1">
+        <div className={cn("flex items-center gap-2.5 py-2", collapsed && !isMobile ? "justify-center px-0" : "px-2")}>
+          <img
+            src={logoAsset.url}
+            alt="Logo"
+            className={cn(
+              "shrink-0 rounded-xl ring-1 ring-sidebar-border",
+              collapsed && !isMobile ? "h-11 w-11" : "h-9 w-9",
+            )}
+          />
+          {(!collapsed || isMobile) && (
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-none tracking-tight">Email Sender</div>
+              <div className="mt-1 text-xs text-sidebar-foreground/45">Workspace</div>
+            </div>
+          )}
         </div>
       </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+      <SidebarContent className="px-2">
+        <SidebarGroup className="px-0.5">
+          <SidebarGroupLabel>Menu</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="gap-1">
               {items.map((item) => (
                 <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={pathname === item.url || pathname.startsWith(item.url + "/")}>
-                    <Link to={item.url} className="flex items-center gap-2">
-                      <item.icon className="h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
+                  <SidebarMenuButton
+                    asChild
+                    size="lg"
+                    tooltip={item.title}
+                    isActive={pathname === item.url || pathname.startsWith(item.url + "/")}
+                  >
+                    <Link to={item.url} className="flex items-center gap-2.5" onClick={closeMobile}>
+                      <item.icon className={collapsed && !isMobile ? "h-5 w-5" : "h-[18px] w-[18px]"} strokeWidth={1.85} />
+                      {(!collapsed || isMobile) && <span>{item.title}</span>}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -73,12 +96,16 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>
+      <SidebarFooter className="px-2.5 pb-3">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={signOut}>
-              <LogOut className="h-4 w-4" />
-              {!collapsed && <span>Sign out</span>}
+            <SidebarMenuButton
+              size="lg"
+              onClick={signOut}
+              className="text-sidebar-foreground/70 hover:text-destructive"
+            >
+              <LogOut className={collapsed && !isMobile ? "h-5 w-5" : "h-[18px] w-[18px]"} strokeWidth={1.85} />
+              {(!collapsed || isMobile) && <span>Sign out</span>}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

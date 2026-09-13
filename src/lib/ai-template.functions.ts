@@ -8,9 +8,9 @@ export const updateTemplateByJD = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
     z.object({
-      subject: z.string().min(1).max(998),
-      body: z.string().min(1).max(100_000),
-      jobDescription: z.string().min(10).max(50_000),
+      subject: z.string().max(998).default(""),
+      body: z.string().max(100_000).default(""),
+      jobDescription: z.string().max(50_000).default(""),
     }).parse(d),
   )
   .handler(async ({ data }) => {

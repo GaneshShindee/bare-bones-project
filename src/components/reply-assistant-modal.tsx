@@ -13,11 +13,14 @@ export function ReplyAssistantModal({
   onOpenChange,
   onGenerate,
   pending,
+  recipientCount,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onGenerate: (opts: { tone: ReplyTone; length: ReplyLength; instruction: string }) => void;
   pending: boolean;
+  /** When set, the draft is reused for this many individual replies. */
+  recipientCount?: number;
 }) {
   const [tone, setTone] = useState<ReplyTone>("professional");
   const [length, setLength] = useState<ReplyLength>("medium");
@@ -27,7 +30,13 @@ export function ReplyAssistantModal({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /> AI Reply Assistant</DialogTitle>
+          {recipientCount ? (
+            <p className="text-sm text-muted-foreground">
+              One draft, personalized and sent individually to {recipientCount} recipient{recipientCount === 1 ? "" : "s"}.
+            </p>
+          ) : null}
         </DialogHeader>
+
         <div className="space-y-3">
           <div>
             <Label>Tone</Label>

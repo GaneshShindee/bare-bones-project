@@ -32,8 +32,8 @@ function AnalyticsPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
-          <p className="text-sm text-muted-foreground">Sends, deliveries, and opens over time.</p>
+          <h1 className="page-title">Analytics</h1>
+          <p className="page-subtitle">Sends, deliveries, and opens over time.</p>
         </div>
         <Select value={String(days)} onValueChange={(v) => setDays(Number(v) as 7 | 30 | 90)}>
           <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
@@ -54,7 +54,7 @@ function AnalyticsPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Sends & opens per day</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Sends & opens per day</CardTitle></CardHeader>
         <CardContent className="h-72">
           {isLoading || !data ? (
             <Skeleton className="h-full w-full" />
@@ -84,7 +84,7 @@ function AnalyticsPage() {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Top templates</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Top templates</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           {isLoading || !data ? (
             <Skeleton className="h-40 w-full" />
@@ -123,19 +123,17 @@ function AnalyticsPage() {
 
 function Stat({ icon: Icon, label, value, sub, loading }: { icon: React.ComponentType<{ className?: string }>; label: string; value: React.ReactNode; sub?: string; loading?: boolean }) {
   return (
-    <Card>
-      <CardContent className="py-5">
-        <div className="flex items-center justify-between">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-          <Icon className="h-4 w-4 text-muted-foreground" />
-        </div>
-        {loading ? <Skeleton className="h-7 w-20 mt-2" /> : (
+    <Card className="transition-orbit hover:border-primary/25">
+      <div className="stat-tile">
+        <Icon className="h-3.5 w-3.5 text-primary" />
+        <div className="text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
+        {loading ? <Skeleton className="h-7 w-16" /> : (
           <>
-            <div className="text-2xl font-semibold mt-1">{value}</div>
-            {sub && <div className="text-xs text-muted-foreground truncate">{sub}</div>}
+            <div className="text-2xl font-semibold tracking-tight leading-none">{value}</div>
+            {sub && <div className="text-xs text-muted-foreground truncate max-w-full px-2">{sub}</div>}
           </>
         )}
-      </CardContent>
+      </div>
     </Card>
   );
 }

@@ -190,7 +190,7 @@ export const sendEmail = createServerFn({ method: "POST" })
     if (connErr) throw new Error(connErr.message);
     if (!conn) throw new Error("Gmail is not connected. Connect Gmail in Settings.");
 
-    const { refreshAccessToken, buildRawEmailWithAttachments, gmailSend, formatFromHeader } = await import("./gmail.server");
+    const { refreshAccessToken, buildRawEmailWithAttachments, gmailSend, formatFromHeader, generateRfcMessageId } = await import("./gmail.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     // Per-user tracking preference (defaults on).
@@ -382,6 +382,7 @@ export const sendEmail = createServerFn({ method: "POST" })
         personalBody = `${personalBody}\n\n📎 View attached resume: ${pdfUrl}`;
       }
 
+      const rfcMessageId = generateRfcMessageId(conn.gmail_email);
       try {
         const raw = buildRawEmailWithAttachments({
           from: fromHeader,
@@ -391,12 +392,18 @@ export const sendEmail = createServerFn({ method: "POST" })
           body: personalBody,
           attachments,
           trackingPixelUrl: pixelUrl,
+          thread: { messageId: rfcMessageId },
         });
-        await gmailSend(accessToken, raw);
+        const sentMsg = await gmailSend(accessToken, raw);
         sentCount += 1;
         await supabaseAdmin
           .from("email_recipients")
-          .update({ status: "sent" })
+          .update({
+            status: "sent",
+            gmail_message_id: sentMsg.id,
+            gmail_thread_id: sentMsg.threadId,
+            rfc_message_id: rfcMessageId,
+          })
           .eq("id", row.id);
       } catch (err) {
         failedCount += 1;
@@ -407,6 +414,7 @@ export const sendEmail = createServerFn({ method: "POST" })
           .update({ status: "failed" })
           .eq("id", row.id);
       }
+
     };
 
     // Simple concurrency-limited worker pool.

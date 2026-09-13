@@ -95,7 +95,7 @@ function SettingsPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <h1 className="page-title">Settings</h1>
         <p className="text-sm text-muted-foreground">Manage your account and connected Gmail accounts.</p>
       </div>
 

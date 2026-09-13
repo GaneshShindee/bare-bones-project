@@ -123,8 +123,8 @@ function ResumeStudioPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <Wand2 className="h-6 w-6 text-primary" /> AI Resume Studio
+          <h1 className="page-title flex items-center gap-2">
+            <Wand2 className="h-4 w-4 text-primary" /> AI Resume Studio
           </h1>
           <p className="text-sm text-muted-foreground">Tailor an ATS-optimised resume to any job description — without ever fabricating facts.</p>
         </div>
@@ -168,7 +168,7 @@ function ResumeStudioPage() {
             ))}
           </div>
         ) : (
-          <EmptyState icon={FileText} title="No master resume yet" desc="Upload your .tex file (and any .cls/.sty assets) to start tailoring." />
+          <EmptyState icon={FileText} title="No master resume yet" desc="Upload a .tex file or paste your LaTeX source to start tailoring." />
         )}
       </section>
 
@@ -237,12 +237,40 @@ function CreateProjectDialog({
 }) {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [mode, setMode] = useState<"upload" | "paste">("upload");
   const [mainFile, setMainFile] = useState<File | null>(null);
+  const [pasteTex, setPasteTex] = useState("");
+  const [pasteFilename, setPasteFilename] = useState("resume.tex");
   const [extra, setExtra] = useState<File[]>([]);
   const mainRef = useRef<HTMLInputElement | null>(null);
   const extraRef = useRef<HTMLInputElement | null>(null);
+
+  const reset = () => {
+    setName("");
+    setDesc("");
+    setMode("upload");
+    setMainFile(null);
+    setPasteTex("");
+    setPasteFilename("resume.tex");
+    setExtra([]);
+  };
+
+  const canSubmit = mode === "upload" ? !!mainFile : true;
+
+  const handleSubmit = () => {
+    if (mode === "upload" && !mainFile) return;
+    const projectName = name.trim() || (mode === "upload" ? mainFile?.name.replace(/\.tex$/i, "") : pasteFilename.replace(/\.tex$/i, "")) || "Master resume";
+    let file = mainFile;
+    if (mode === "paste") {
+      const filename = (pasteFilename.trim() || "resume.tex").replace(/\.tex$/i, "") + ".tex";
+      file = new File([pasteTex], filename, { type: "application/x-tex" });
+    }
+    if (!file) return;
+    onSubmit({ name: projectName, description: desc.trim(), mainFile: file, extra });
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) { setName(""); setDesc(""); setMainFile(null); setExtra([]); } }}>
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader><DialogTitle>Upload master LaTeX resume</DialogTitle></DialogHeader>
         <div className="space-y-3">
@@ -254,13 +282,57 @@ function CreateProjectDialog({
             <Label>Description (optional)</Label>
             <Textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} />
           </div>
-          <div>
-            <Label>Main .tex file</Label>
-            <input ref={mainRef} type="file" accept=".tex,text/x-tex,application/x-tex" hidden onChange={(e) => setMainFile(e.target.files?.[0] ?? null)} />
-            <Button variant="outline" onClick={() => mainRef.current?.click()} className="w-full justify-start">
-              <Upload className="h-4 w-4 mr-2" /> {mainFile ? mainFile.name : "Choose resume.tex"}
+          <div className="flex gap-1 rounded-lg border border-border p-1 bg-muted/30">
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === "upload" ? "default" : "ghost"}
+              className="flex-1"
+              onClick={() => setMode("upload")}
+            >
+              <Upload className="h-3.5 w-3.5 mr-1" /> Upload .tex
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === "paste" ? "default" : "ghost"}
+              className="flex-1"
+              onClick={() => setMode("paste")}
+            >
+              <FileText className="h-3.5 w-3.5 mr-1" /> Paste LaTeX
             </Button>
           </div>
+          {mode === "upload" ? (
+            <div>
+              <Label>Main .tex file</Label>
+              <input ref={mainRef} type="file" accept=".tex,text/x-tex,application/x-tex" hidden onChange={(e) => setMainFile(e.target.files?.[0] ?? null)} />
+              <Button variant="outline" onClick={() => mainRef.current?.click()} className="w-full justify-start">
+                <Upload className="h-4 w-4 mr-2" /> {mainFile ? mainFile.name : "Choose resume.tex"}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div>
+                <Label>Filename</Label>
+                <Input
+                  value={pasteFilename}
+                  onChange={(e) => setPasteFilename(e.target.value)}
+                  placeholder="resume.tex"
+                />
+              </div>
+              <div>
+                <Label>LaTeX source</Label>
+                <Textarea
+                  rows={12}
+                  value={pasteTex}
+                  onChange={(e) => setPasteTex(e.target.value)}
+                  placeholder={"\\documentclass{article}\n\\begin{document}\n...\n\\end{document}"}
+                  className="font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Saved as a .tex file in your master resume project.</p>
+              </div>
+            </div>
+          )}
           <div>
             <Label>Project assets (optional: .cls, .sty, images…)</Label>
             <input ref={extraRef} type="file" multiple hidden onChange={(e) => setExtra(Array.from(e.target.files ?? []))} />
@@ -271,10 +343,7 @@ function CreateProjectDialog({
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button
-            disabled={pending || !name.trim() || !mainFile}
-            onClick={() => onSubmit({ name: name.trim(), description: desc.trim(), mainFile: mainFile!, extra })}
-          >
+          <Button disabled={pending || !canSubmit} onClick={handleSubmit}>
             {pending ? "Uploading…" : "Save master resume"}
           </Button>
         </DialogFooter>
@@ -340,7 +409,7 @@ function GenerateDialog({
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
-            disabled={pending || !projectId || jd.trim().length < 20}
+            disabled={pending || !projectId}
             onClick={() => onSubmit({ projectId, jd: jd.trim(), jobTitle: jobTitle.trim(), company: company.trim(), instructions: instructions.trim() })}
           >
             {pending ? "Generating…" : <><Sparkles className="h-4 w-4 mr-2" /> Generate</>}

@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TemplateCombobox } from "@/components/template-combobox";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
@@ -191,19 +192,16 @@ export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wide text-muted-foreground">Instruction Template</Label>
                 <div className="flex gap-2">
-                  <Select
+                  <TemplateCombobox
+                    className="flex-1"
+                    templates={(templates.data ?? []).map((t) => ({ id: t.id, name: t.name }))}
                     value={selectedId ?? ""}
-                    onValueChange={(v) => setSelectedId(v)}
-                  >
-                    <SelectTrigger className="flex-1">
-                      <SelectValue placeholder={templates.data?.length ? "Select template" : "No templates yet"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {templates.data?.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    onValueChange={(v) => setSelectedId(v || null)}
+                    placeholder={templates.data?.length ? "Select template" : "No templates yet"}
+                    searchPlaceholder="Search instruction templates…"
+                    emptyText="No templates found."
+                    disabled={!templates.data?.length}
+                  />
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="icon" title="Template actions">

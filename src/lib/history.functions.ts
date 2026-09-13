@@ -21,6 +21,192 @@ export const listHistory = createServerFn({ method: "GET" })
     return rows ?? [];
   });
 
+export type CampaignSummary = {
+  id: string;
+  subject: string;
+  template_name: string | null;
+  sender_email: string | null;
+  status: string;
+  sent_at: string;
+  error: string | null;
+  recipient_count: number;
+  recipients: number;
+  opened: number;
+  total_opens: number;
+  resume_views: number;
+  replied: number;
+  you_replied: number;
+  attachment_count: number;
+};
+
+/** Campaign-level history list (one row per send, replies excluded). */
+export const listCampaigns = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        search: z.string().default(""),
+        status: z.string().default("all"),
+        limit: z.number().int().min(1).max(500).default(200),
+      })
+      .parse(d ?? {}),
+  )
+  .handler(async ({ data, context }): Promise<CampaignSummary[]> => {
+    let q = context.supabase
+      .from("email_history")
+      .select("id, subject, template_name, sender_email, status, sent_at, error, recipient_count, attachments, kind")
+      .eq("user_id", context.userId)
+      .neq("kind", "reply")
+      .order("sent_at", { ascending: false })
+      .limit(data.limit);
+    if (data.status !== "all") q = q.eq("status", data.status);
+    if (data.search) q = q.or(`recipient.ilike.%${data.search}%,subject.ilike.%${data.search}%,template_name.ilike.%${data.search}%`);
+    const { data: rows, error } = await q;
+    if (error) throw new Error(error.message);
+    const campaigns = rows ?? [];
+    if (campaigns.length === 0) return [];
+
+    const ids = campaigns.map((c) => c.id);
+    const { data: recipients } = await context.supabase
+      .from("email_recipients")
+      .select("email_history_id, open_count, pdf_view_count, replied_at, user_reply_sent_at")
+      .eq("user_id", context.userId)
+      .in("email_history_id", ids);
+
+    const agg = new Map<string, { recipients: number; opened: number; opens: number; resume: number; replied: number; youReplied: number }>();
+    for (const r of recipients ?? []) {
+      const a = agg.get(r.email_history_id) ?? { recipients: 0, opened: 0, opens: 0, resume: 0, replied: 0, youReplied: 0 };
+      a.recipients += 1;
+      a.opens += r.open_count ?? 0;
+      if ((r.open_count ?? 0) > 0) a.opened += 1;
+      if ((r.pdf_view_count ?? 0) > 0) a.resume += 1;
+      if (r.replied_at) a.replied += 1;
+      if (r.user_reply_sent_at) a.youReplied += 1;
+      agg.set(r.email_history_id, a);
+    }
+
+    return campaigns.map((c) => {
+      const a = agg.get(c.id);
+      const attachments = Array.isArray(c.attachments) ? (c.attachments as unknown[]) : [];
+      return {
+        id: c.id,
+        subject: c.subject,
+        template_name: c.template_name,
+        sender_email: c.sender_email,
+        status: c.status,
+        sent_at: c.sent_at,
+        error: c.error,
+        recipient_count: c.recipient_count ?? 0,
+        recipients: a?.recipients ?? c.recipient_count ?? 0,
+        opened: a?.opened ?? 0,
+        total_opens: a?.opens ?? 0,
+        resume_views: a?.resume ?? 0,
+        replied: a?.replied ?? 0,
+        you_replied: a?.youReplied ?? 0,
+        attachment_count: attachments.length,
+      };
+    });
+  });
+
+/**
+ * Recipient-level history rows with reply + resume-view state resolved from the
+ * real tracking tables, then filtered with the shared filter logic.
+ */
+export const listHistoryRecipients = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        search: z.string().default(""),
+        openCount: z.enum(["all", "0", "1", "1+", "2", "3+"]).default("all"),
+        replyStatus: z.enum(["all", "replied", "not_replied"]).default("all"),
+        resume: z.enum(["all", "viewed", "not_viewed"]).default("all"),
+        status: z.string().default("all"),
+        campaignId: z.string().uuid().optional(),
+        limit: z.number().int().min(1).max(2000).default(1000),
+      })
+      .parse(d ?? {}),
+  )
+  .handler(async ({ data, context }) => {
+    const { filterRecipients } = await import("@/lib/history-filters");
+    let q = context.supabase
+      .from("email_recipients")
+      .select(
+        "id, email_history_id, email, name, company, status, open_count, first_opened_at, last_opened_at, pdf_view_count, last_pdf_view_at, replied_at, user_reply_sent_at, user_reply_count, followup_count, gmail_thread_id, gmail_message_id, rfc_message_id",
+      )
+      .eq("user_id", context.userId)
+      .order("created_at", { ascending: false })
+      .limit(data.limit);
+    if (data.campaignId) q = q.eq("email_history_id", data.campaignId);
+    const { data: rows, error } = await q;
+    if (error) throw new Error(error.message);
+    const list = rows ?? [];
+    if (list.length === 0) return [];
+
+    const historyIds = Array.from(new Set(list.map((r) => r.email_history_id)));
+    const [{ data: campaigns }, { data: replies }] = await Promise.all([
+      context.supabase
+        .from("email_history")
+        .select("id, subject, template_name, sender_email, sent_at")
+        .in("id", historyIds)
+        .eq("user_id", context.userId),
+      context.supabase
+        .from("email_replies")
+        .select("email_recipient_id, from_email, received_at")
+        .eq("user_id", context.userId)
+        .limit(5000),
+    ]);
+    const campaignById = new Map((campaigns ?? []).map((c) => [c.id, c]));
+    const repliedRecipientIds = new Set<string>();
+    const repliedEmails = new Map<string, string>();
+    for (const r of replies ?? []) {
+      if (r.email_recipient_id) repliedRecipientIds.add(r.email_recipient_id);
+      const key = r.from_email.toLowerCase();
+      if (!repliedEmails.has(key)) repliedEmails.set(key, r.received_at);
+    }
+
+    const shaped = list.map((r) => {
+      const c = campaignById.get(r.email_history_id);
+      const hasReply =
+        !!r.replied_at || repliedRecipientIds.has(r.id) || repliedEmails.has(r.email.toLowerCase());
+      return {
+        id: r.id,
+        email_history_id: r.email_history_id,
+        email: r.email,
+        name: r.name,
+        company: r.company,
+        subject: c?.subject ?? "(deleted campaign)",
+        template_name: c?.template_name ?? null,
+        sender_email: c?.sender_email ?? null,
+        sent_at: c?.sent_at ?? new Date(0).toISOString(),
+        status: r.status,
+        open_count: r.open_count ?? 0,
+        last_opened_at: r.last_opened_at,
+        first_opened_at: r.first_opened_at,
+        pdf_view_count: r.pdf_view_count ?? 0,
+        last_pdf_view_at: r.last_pdf_view_at,
+        has_reply: hasReply,
+        recipient_replied_at: r.replied_at ?? repliedEmails.get(r.email.toLowerCase()) ?? null,
+        user_reply_sent: !!r.user_reply_sent_at,
+        user_reply_count: r.user_reply_count ?? 0,
+        user_reply_sent_at: r.user_reply_sent_at,
+        followup_count: r.followup_count ?? 0,
+        gmail_thread_id: r.gmail_thread_id,
+        gmail_message_id: r.gmail_message_id,
+        rfc_message_id: r.rfc_message_id,
+      };
+    });
+
+    return filterRecipients(shaped, {
+      search: data.search,
+      openCount: data.openCount,
+      replyStatus: data.replyStatus,
+      resume: data.resume,
+      status: data.status,
+    });
+  });
+
+
 export const dashboardStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -179,4 +365,145 @@ export const getRecipient = createServerFn({ method: "GET" })
     if (oErr) throw new Error(oErr.message);
 
     return { recipient, campaign, opens: opens ?? [] };
+  });
+
+export type ThreadMessage = {
+  id: string;
+  direction: "outgoing" | "incoming";
+  subject: string | null;
+  body: string;
+  at: string;
+  /** Outgoing only: whether/how often the recipient viewed this exact message. */
+  open_count: number;
+  first_opened_at: string | null;
+  last_opened_at: string | null;
+  pdf_view_count: number;
+  tracking_enabled: boolean;
+  is_original: boolean;
+};
+
+/**
+ * The full conversation for one recipient: the original email we sent, every
+ * reply we sent afterwards (each individually tracked), and every reply they
+ * sent back — ordered chronologically.
+ */
+export const getRecipientThread = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: recipient, error } = await supabase
+      .from("email_recipients")
+      .select(
+        "id, email, name, company, status, open_count, first_opened_at, last_opened_at, pdf_view_count, first_pdf_view_at, last_pdf_view_at, replied_at, user_reply_count, followup_count, email_history_id, gmail_thread_id",
+      )
+      .eq("id", data.id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!recipient) throw new Error("Recipient not found");
+
+    const { data: campaign } = await supabase
+      .from("email_history")
+      .select("id, subject, body, sent_at, sender_email, gmail_account_id, template_name, tracking_enabled, parent_campaign_id, attachments")
+      .eq("id", recipient.email_history_id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (!campaign) throw new Error("Campaign not found");
+    const rootId = campaign.parent_campaign_id ?? campaign.id;
+
+    const [{ data: replyCampaigns }, { data: incoming }] = await Promise.all([
+      supabase
+        .from("email_history")
+        .select("id, subject, body, sent_at, sender_email, tracking_enabled")
+        .eq("user_id", userId)
+        .eq("kind", "reply")
+        .eq("parent_campaign_id", rootId)
+        .order("sent_at", { ascending: true }),
+      supabase
+        .from("email_replies")
+        .select("id, subject, body, snippet, received_at, from_email, email_recipient_id")
+        .eq("user_id", userId)
+        .order("received_at", { ascending: true })
+        .limit(200),
+    ]);
+
+    const replyIds = (replyCampaigns ?? []).map((c) => c.id);
+    let replyRecipientRows: Array<{
+      email_history_id: string;
+      email: string;
+      open_count: number | null;
+      first_opened_at: string | null;
+      last_opened_at: string | null;
+      pdf_view_count: number | null;
+    }> = [];
+    if (replyIds.length > 0) {
+      const { data: rr } = await supabase
+        .from("email_recipients")
+        .select("email_history_id, email, open_count, first_opened_at, last_opened_at, pdf_view_count")
+        .eq("user_id", userId)
+        .in("email_history_id", replyIds);
+      replyRecipientRows = rr ?? [];
+    }
+    const statsByReply = new Map(
+      replyRecipientRows
+        .filter((r) => r.email.toLowerCase() === recipient.email.toLowerCase())
+        .map((r) => [r.email_history_id, r]),
+    );
+
+    const messages: ThreadMessage[] = [
+      {
+        id: campaign.id,
+        direction: "outgoing",
+        subject: campaign.subject,
+        body: campaign.body,
+        at: campaign.sent_at,
+        open_count: recipient.open_count ?? 0,
+        first_opened_at: recipient.first_opened_at,
+        last_opened_at: recipient.last_opened_at,
+        pdf_view_count: recipient.pdf_view_count ?? 0,
+        tracking_enabled: !!campaign.tracking_enabled,
+        is_original: true,
+      },
+    ];
+
+    for (const c of replyCampaigns ?? []) {
+      const stats = statsByReply.get(c.id);
+      if (!stats) continue; // a reply sent to a different recipient in this campaign
+      messages.push({
+        id: c.id,
+        direction: "outgoing",
+        subject: c.subject,
+        body: c.body,
+        at: c.sent_at,
+        open_count: stats.open_count ?? 0,
+        first_opened_at: stats.first_opened_at,
+        last_opened_at: stats.last_opened_at,
+        pdf_view_count: stats.pdf_view_count ?? 0,
+        tracking_enabled: !!c.tracking_enabled,
+        is_original: false,
+      });
+    }
+
+    const email = recipient.email.toLowerCase();
+    for (const r of incoming ?? []) {
+      const mine = r.email_recipient_id === recipient.id || r.from_email.toLowerCase() === email;
+      if (!mine) continue;
+      messages.push({
+        id: r.id,
+        direction: "incoming",
+        subject: r.subject,
+        body: r.body ?? r.snippet ?? "",
+        at: r.received_at,
+        open_count: 0,
+        first_opened_at: null,
+        last_opened_at: null,
+        pdf_view_count: 0,
+        tracking_enabled: false,
+        is_original: false,
+      });
+    }
+
+    messages.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    return { recipient, campaign, messages };
   });

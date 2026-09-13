@@ -156,8 +156,53 @@ function buildBodyMime(text: string, pixelUrl?: string): { contentType: string; 
   return { contentType: `multipart/alternative; boundary="${boundary}"`, body };
 }
 
+/** Threading headers shared by campaign sends and replies. */
+export type ThreadHeaders = {
+  /** RFC 5322 Message-ID of THIS message, e.g. `<abc@mail.gmail.com>`. */
+  messageId?: string | null;
+  /** Message-ID of the message being replied to. */
+  inReplyTo?: string | null;
+  /** Full References chain. */
+  references?: string | null;
+};
+
+/** Generate a unique RFC 5322 Message-ID for a message we are about to send. */
+export function generateRfcMessageId(senderEmail: string): string {
+  const domain = senderEmail.includes("@") ? senderEmail.split("@")[1] : "mail.gmail.com";
+  const rand = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  return `<ses-${rand}@${domain}>`;
+}
+
+/** `Re: ` prefix without ever producing `Re: Re: `. */
+export function replySubject(original: string | null | undefined): string {
+  const s = (original ?? "").trim();
+  if (!s) return "Re:";
+  return /^re\s*:/i.test(s) ? s : `Re: ${s}`;
+}
+
+/** Build the References chain for a reply. */
+export function buildReferences(opts: { references?: string | null; inReplyTo?: string | null }): string | null {
+  const parts = [
+    ...(opts.references ?? "").split(/\s+/).filter(Boolean),
+    ...((opts.inReplyTo ?? "").trim() ? [(opts.inReplyTo ?? "").trim()] : []),
+  ];
+  const seen = new Set<string>();
+  const uniq = parts.filter((p) => (seen.has(p) ? false : (seen.add(p), true)));
+  return uniq.length ? uniq.join(" ") : null;
+}
+
+function threadHeaderLines(t?: ThreadHeaders): string[] {
+  if (!t) return [];
+  const lines: string[] = [];
+  if (t.messageId) lines.push(`Message-ID: ${t.messageId}`);
+  if (t.inReplyTo) lines.push(`In-Reply-To: ${t.inReplyTo}`);
+  if (t.references) lines.push(`References: ${t.references}`);
+  return lines;
+}
+
 export function buildRawEmail(opts: {
   from: string; to: string; bcc?: string; subject: string; body: string; trackingPixelUrl?: string;
+  thread?: ThreadHeaders;
 }) {
   const mime = buildBodyMime(opts.body, opts.trackingPixelUrl);
   const headers = [
@@ -165,6 +210,7 @@ export function buildRawEmail(opts: {
     `To: ${opts.to}`,
     opts.bcc ? `Bcc: ${opts.bcc}` : null,
     `Subject: ${encodeHeader(opts.subject)}`,
+    ...threadHeaderLines(opts.thread),
     `MIME-Version: 1.0`,
     `Content-Type: ${mime.contentType}`,
   ].filter((l): l is string => l !== null);
@@ -173,6 +219,7 @@ export function buildRawEmail(opts: {
   return base64url(message);
 
 }
+
 
 export type EmailAttachment = {
   filename: string;
@@ -214,11 +261,12 @@ export function buildRawEmailWithAttachments(opts: {
   body: string;
   attachments: EmailAttachment[];
   trackingPixelUrl?: string;
+  thread?: ThreadHeaders;
 }) {
   if (!opts.attachments || opts.attachments.length === 0) {
     return buildRawEmail({
       from: opts.from, to: opts.to, bcc: opts.bcc, subject: opts.subject, body: opts.body,
-      trackingPixelUrl: opts.trackingPixelUrl,
+      trackingPixelUrl: opts.trackingPixelUrl, thread: opts.thread,
     });
   }
   const boundary = `=_ses_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
@@ -227,9 +275,11 @@ export function buildRawEmailWithAttachments(opts: {
     `To: ${opts.to}`,
     opts.bcc ? `Bcc: ${opts.bcc}` : null,
     `Subject: ${encodeHeader(opts.subject)}`,
+    ...threadHeaderLines(opts.thread),
     `MIME-Version: 1.0`,
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
   ].filter(Boolean);
+
 
   const bodyMime = buildBodyMime(opts.body, opts.trackingPixelUrl);
   const parts: string[] = [];
@@ -254,18 +304,21 @@ export function buildRawEmailWithAttachments(opts: {
   return Buffer.from(message, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-export async function gmailSend(accessToken: string, raw: string) {
+export async function gmailSend(accessToken: string, raw: string, threadId?: string | null) {
+  const payload: { raw: string; threadId?: string } = { raw };
+  if (threadId) payload.threadId = threadId;
   const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ raw }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`Gmail send failed: ${res.status} ${await res.text()}`);
   return (await res.json()) as { id: string; threadId: string };
 }
+
 
 export function callbackRedirectUri(origin: string) {
   return `${origin}/api/public/gmail/callback`;

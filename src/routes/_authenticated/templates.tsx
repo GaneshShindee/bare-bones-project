@@ -18,6 +18,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "./dashboard";
 import { extractVariables } from "@/lib/templating";
+import { AiBodyDialog } from "@/components/ai-body-dialog";
 
 export const Route = createFileRoute("/_authenticated/templates")({
   head: () => ({ meta: [{ title: "My Templates — Smart Email Sender" }] }),
@@ -47,6 +48,7 @@ function TemplatesPage() {
   const [gallerySearch, setGallerySearch] = useState("");
   const [jdOpen, setJdOpen] = useState(false);
   const [jdText, setJdText] = useState("");
+  const [aiOpen, setAiOpen] = useState(false);
   const [previewTpl, setPreviewTpl] = useState<{ name: string; subject: string; body: string } | null>(null);
 
   const gallery = useQuery({
@@ -101,7 +103,7 @@ function TemplatesPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Templates</h1>
+          <h1 className="page-title">Templates</h1>
           <p className="text-sm text-muted-foreground">Use <code className="text-xs bg-muted px-1 py-0.5 rounded">{`{{placeholder}}`}</code> syntax to insert dynamic fields.</p>
         </div>
         <Button onClick={() => setEditing({ name: "", subject: "", body: "" })}><Plus className="h-4 w-4 mr-2" />New template</Button>
@@ -200,7 +202,15 @@ function TemplatesPage() {
           {editing && (
             <div className="space-y-3">
               <div><Label>Name</Label><Input value={editing.name ?? ""} onChange={(e) => setEditing({ ...editing, name: e.target.value })} placeholder="Job application" /></div>
-              <div><Label>Subject</Label><Input value={editing.subject ?? ""} onChange={(e) => setEditing({ ...editing, subject: e.target.value })} placeholder="Application for {{position}}" /></div>
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Subject</Label>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setAiOpen(true)}>
+                    <Sparkles className="h-3.5 w-3.5 mr-1" /> Generate subject & body with AI
+                  </Button>
+                </div>
+                <Input value={editing.subject ?? ""} onChange={(e) => setEditing({ ...editing, subject: e.target.value })} placeholder="Application for {{position}}" />
+              </div>
               <div>
                 <div className="flex items-center justify-between">
                   <Label>Body</Label>
@@ -233,7 +243,7 @@ function TemplatesPage() {
           )}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
-            <Button onClick={() => editing && save.mutate(editing)} disabled={save.isPending || !editing?.name?.trim()}>{save.isPending ? "Saving…" : "Save"}</Button>
+            <Button onClick={() => editing && save.mutate(editing)} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -245,12 +255,32 @@ function TemplatesPage() {
           <Textarea rows={10} value={jdText} onChange={(e) => setJdText(e.target.value)} placeholder="Paste the job description here…" />
           <DialogFooter>
             <Button variant="ghost" onClick={() => setJdOpen(false)}>Cancel</Button>
-            <Button onClick={() => jdUpdate.mutate()} disabled={jdUpdate.isPending || jdText.trim().length < 10}>
+            <Button onClick={() => jdUpdate.mutate()} disabled={jdUpdate.isPending}>
               <Sparkles className="h-4 w-4 mr-2" /> {jdUpdate.isPending ? "Rewriting…" : "Update template"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AiBodyDialog
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        templateId={editing?.id ?? null}
+        resumeVersionId={null}
+        onUse={(r) => {
+          setEditing((cur) =>
+            cur
+              ? {
+                  ...cur,
+                  subject: r.subject || cur.subject,
+                  body: r.body,
+                  name: cur.name?.trim() ? cur.name : (r.role ? `${r.role} outreach` : cur.name),
+                }
+              : cur,
+          );
+          toast.success("AI subject & body applied");
+        }}
+      />
 
       <Dialog open={!!previewTpl} onOpenChange={(o) => !o && setPreviewTpl(null)}>
         <DialogContent className="max-w-xl">

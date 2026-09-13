@@ -138,7 +138,7 @@ function ResumesPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Resume Library</h1>
+          <h1 className="page-title">Resume Library</h1>
           <p className="text-sm text-muted-foreground">Upload up to 25 MB per file. PDF, DOC, DOCX.</p>
         </div>
         <div>

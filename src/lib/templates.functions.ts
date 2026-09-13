@@ -17,7 +17,7 @@ export const listTemplates = createServerFn({ method: "GET" })
 
 const upsertSchema = z.object({
   id: z.string().uuid().optional().nullable(),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().max(120).default(""),
   subject: z.string().max(998).default(""),
   body: z.string().max(100_000).default(""),
   preferredResumeId: z.string().uuid().nullable().optional(),
@@ -30,9 +30,10 @@ export const upsertTemplate = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => upsertSchema.parse(d))
   .handler(async ({ data, context }) => {
+    const name = data.name.trim() || "Untitled template";
     if (data.id) {
       const update: TablesUpdate<"templates"> = {
-        name: data.name,
+        name,
         subject: data.subject,
         body: data.body,
         preferred_resume_id: data.preferredResumeId ?? null,
@@ -54,7 +55,7 @@ export const upsertTemplate = createServerFn({ method: "POST" })
         .from("templates")
         .insert({
           user_id: context.userId,
-          name: data.name,
+          name,
           subject: data.subject,
           body: data.body,
           preferred_resume_id: data.preferredResumeId ?? null,

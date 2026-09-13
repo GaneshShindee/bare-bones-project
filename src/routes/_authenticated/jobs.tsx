@@ -19,9 +19,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
-import { Bookmark, BookmarkCheck, Briefcase, Building2, MapPin, Plus, Search, Send, Share2, Sparkles, Trash2, Wand2, ExternalLink, Pencil } from "lucide-react";
+import { Bookmark, BookmarkCheck, Briefcase, Building2, MapPin, Plus, Search, Send, Share2, Sparkles, Trash2, Wand2, ExternalLink, Pencil, CalendarDays } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { relativeTime } from "@/lib/user-agent";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export const Route = createFileRoute("/_authenticated/jobs")({
   head: () => ({ meta: [{ title: "Jobs Board — Smart Email Sender" }] }),
@@ -71,6 +73,9 @@ function JobsPage() {
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "mine" | "bookmarked" | "remote" | "hybrid" | "onsite">("all");
+  const [dateFilter, setDateFilter] = useState<"all" | "today" | "week" | "month">("all");
+  const [roleFilter, setRoleFilter] = useState<string>("all");
+  const [experienceFilter, setExperienceFilter] = useState<string>("all");
   const [editOpen, setEditOpen] = useState(false);
   const [parseOpen, setParseOpen] = useState(false);
   const [parseText, setParseText] = useState("");
@@ -92,8 +97,9 @@ function JobsPage() {
     mutationFn: (f: EditForm) => upsertFn({
       data: {
         id: f.id ?? undefined,
-        title: f.title, company: f.company, location: f.location,
-        work_mode: f.work_mode, employment_type: f.employment_type,
+        title: f.title || "Untitled role",
+        company: f.company || "Unknown company",
+        location: f.location, work_mode: f.work_mode, employment_type: f.employment_type,
         experience: f.experience, salary: f.salary, description: f.description,
         responsibilities: toArr(f.responsibilities), skills: toArr(f.skills),
         technologies: toArr(f.technologies), tags: toArr(f.tags),
@@ -191,19 +197,53 @@ function JobsPage() {
   ];
 
   const jobs = jobsQ.data ?? [];
-  const shown = useMemo(() => jobs, [jobs]);
+
+  const roleOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const j of jobs) {
+      const t = j.title.trim();
+      if (t) set.add(t);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [jobs]);
+
+  const experienceOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const j of jobs) {
+      const e = j.experience.trim();
+      if (e) set.add(e);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [jobs]);
+
+  const shown = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const weekAgo = startOfToday - 6 * 24 * 60 * 60 * 1000;
+    const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()).getTime();
+
+    return jobs.filter((j) => {
+      const created = new Date(j.created_at).getTime();
+      if (dateFilter === "today" && created < startOfToday) return false;
+      if (dateFilter === "week" && created < weekAgo) return false;
+      if (dateFilter === "month" && created < monthAgo) return false;
+      if (roleFilter !== "all" && j.title.trim() !== roleFilter) return false;
+      if (experienceFilter !== "all" && j.experience.trim() !== experienceFilter) return false;
+      return true;
+    });
+  }, [jobs, dateFilter, roleFilter, experienceFilter]);
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2"><Briefcase className="h-6 w-6" /> Community Jobs Board</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="page-title flex items-center gap-2"><Briefcase className="h-4 w-4 shrink-0" /> Community Jobs Board</h1>
           <p className="text-sm text-muted-foreground">Discover opportunities shared by other users. Generate tailored resumes in one click.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 w-full sm:w-auto">
           <Dialog open={parseOpen} onOpenChange={setParseOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline"><Sparkles className="h-4 w-4 mr-1" /> AI Parse</Button>
+              <Button variant="outline" className="flex-1 sm:flex-none"><Sparkles className="h-4 w-4 mr-1" /> AI Parse</Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-2xl">
               <DialogHeader><DialogTitle>Paste job info</DialogTitle></DialogHeader>
@@ -215,30 +255,82 @@ function JobsPage() {
               />
               <DialogFooter>
                 <Button variant="ghost" onClick={() => setParseOpen(false)}>Cancel</Button>
-                <Button onClick={() => parse.mutate(parseText)} disabled={parse.isPending || parseText.trim().length < 20}>
+                <Button onClick={() => parse.mutate(parseText)} disabled={parse.isPending || !parseText.trim()}>
                   <Wand2 className="h-4 w-4 mr-1" /> {parse.isPending ? "Parsing…" : "Extract fields"}
                 </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <Button onClick={() => { setForm(blankForm()); setEditOpen(true); }}>
+          <Button className="flex-1 sm:flex-none" onClick={() => { setForm(blankForm()); setEditOpen(true); }}>
             <Plus className="h-4 w-4 mr-1" /> Publish job
           </Button>
         </div>
       </div>
 
       <Card>
-        <CardContent className="py-3 flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[220px]">
-            <Search className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
-            <Input className="pl-8" placeholder="Search by title, company, location…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <CardContent className="py-3 space-y-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative w-full sm:flex-1 sm:min-w-[220px]">
+              <Search className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
+              <Input className="pl-8" placeholder="Search by title, company, location…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {filters.map((f) => (
+                <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
+                  {f.label}
+                </Button>
+              ))}
+            </div>
           </div>
-          <div className="flex flex-wrap gap-1">
-            {filters.map((f) => (
-              <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
-                {f.label}
+          <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2">
+            <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as typeof dateFilter)}>
+              <SelectTrigger className="w-full sm:w-[150px] h-9">
+                <CalendarDays className="h-3.5 w-3.5 mr-1.5 shrink-0 opacity-60" />
+                <SelectValue placeholder="Added" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any date</SelectItem>
+                <SelectItem value="today">Added today</SelectItem>
+                <SelectItem value="week">Last 7 days</SelectItem>
+                <SelectItem value="month">Last 30 days</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <SelectTrigger className="w-full sm:w-[200px] h-9">
+                <SelectValue placeholder="Role" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All roles</SelectItem>
+                {roleOptions.map((r) => (
+                  <SelectItem key={r} value={r}>{r}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={experienceFilter} onValueChange={setExperienceFilter}>
+              <SelectTrigger className="w-full sm:w-[180px] h-9">
+                <SelectValue placeholder="Experience" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All experience</SelectItem>
+                {experienceOptions.map((e) => (
+                  <SelectItem key={e} value={e}>{e}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {(dateFilter !== "all" || roleFilter !== "all" || experienceFilter !== "all") && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  setDateFilter("all");
+                  setRoleFilter("all");
+                  setExperienceFilter("all");
+                }}
+              >
+                Clear filters
               </Button>
-            ))}
+            )}
           </div>
         </CardContent>
       </Card>
@@ -263,6 +355,9 @@ function JobsPage() {
                       <div className="text-sm text-muted-foreground flex items-center gap-1 truncate">
                         <Building2 className="h-3.5 w-3.5" /> {j.company}
                         {j.location && <><span className="mx-1">·</span><MapPin className="h-3.5 w-3.5" /> {j.location}</>}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                        <CalendarDays className="h-3 w-3" /> Added {relativeTime(j.created_at)}
                       </div>
                     </div>
                     <Button size="icon" variant="ghost" onClick={() => bookmark.mutate({ jobId: j.id, bookmark: !bookmarked })} title={bookmarked ? "Remove bookmark" : "Bookmark"}>
@@ -304,8 +399,8 @@ function JobsPage() {
         <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{form.id ? "Edit job" : "Publish new job"}</DialogTitle></DialogHeader>
           <div className="grid gap-3 md:grid-cols-2">
-            <Field label="Title *"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
-            <Field label="Company *"><Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} /></Field>
+            <Field label="Title"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+            <Field label="Company"><Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} /></Field>
             <Field label="Location"><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
             <Field label="Work mode"><Input placeholder="remote / hybrid / onsite" value={form.work_mode} onChange={(e) => setForm({ ...form, work_mode: e.target.value })} /></Field>
             <Field label="Employment type"><Input placeholder="full-time / intern / contract" value={form.employment_type} onChange={(e) => setForm({ ...form, employment_type: e.target.value })} /></Field>
@@ -326,7 +421,7 @@ function JobsPage() {
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setEditOpen(false)}>Cancel</Button>
-            <Button onClick={() => save.mutate(form)} disabled={save.isPending || !form.title.trim() || !form.company.trim()}>
+            <Button onClick={() => save.mutate(form)} disabled={save.isPending}>
               {save.isPending ? "Saving…" : form.id ? "Save changes" : "Publish"}
             </Button>
           </DialogFooter>

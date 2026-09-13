@@ -45,10 +45,10 @@ export const listResumeProjects = createServerFn({ method: "GET" })
   });
 
 const createProjectSchema = z.object({
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().max(120).default(""),
   description: z.string().max(1000).optional().nullable(),
-  mainTexFilename: z.string().min(1).max(255).default("resume.tex"),
-  mainTexContent: z.string().min(1).max(500_000),
+  mainTexFilename: z.string().max(255).default("resume.tex"),
+  mainTexContent: z.string().max(500_000).default(""),
   extraFiles: z.array(z.object({
     filename: z.string().min(1).max(255),
     mimeType: z.string().max(128).optional(),
@@ -67,11 +67,14 @@ export const createResumeProject = createServerFn({ method: "POST" })
     const projectId = crypto.randomUUID();
     const prefix = `${userId}/${projectId}/`;
 
+    const mainFilename = (data.mainTexFilename || "resume.tex").replace(/\.tex$/i, "") + ".tex";
+    const projectName = data.name.trim() || mainFilename.replace(/\.tex$/i, "") || "Master resume";
+
     // Upload main.tex + assets.
-    const mainPath = `${prefix}${data.mainTexFilename}`;
+    const mainPath = `${prefix}${mainFilename}`;
     const mainUp = await context.supabase.storage
       .from("resume-latex")
-      .upload(mainPath, new Blob([data.mainTexContent], { type: "application/x-tex" }), {
+      .upload(mainPath, new Blob([data.mainTexContent ?? ""], { type: "application/x-tex" }), {
         contentType: "application/x-tex",
         upsert: true,
       });
@@ -107,10 +110,10 @@ export const createResumeProject = createServerFn({ method: "POST" })
       .insert({
         id: projectId,
         user_id: userId,
-        name: data.name,
+        name: projectName,
         description: data.description ?? null,
         storage_prefix: prefix,
-        main_tex_filename: data.mainTexFilename,
+        main_tex_filename: mainFilename,
         is_default: shouldDefault,
       })
       .select()
@@ -182,7 +185,7 @@ export const listResumeVersions = createServerFn({ method: "GET" })
 
 const generateSchema = z.object({
   projectId: z.string().uuid(),
-  jobDescription: z.string().min(20).max(50_000),
+  jobDescription: z.string().max(50_000).default(""),
   jobTitle: z.string().max(200).optional().nullable(),
   company: z.string().max(200).optional().nullable(),
   customInstructions: z.string().max(4000).optional().nullable(),
@@ -474,7 +477,8 @@ export const generateApplicationEmail = createServerFn({ method: "POST" })
 const sectionSchema = z.object({
   id: z.string().uuid(),
   section: z.enum(["summary", "experience", "projects", "skills", "ats"]),
-  instructions: z.string().max(2000).optional().nullable(),
+  instructions: z.string().max(4000).optional().nullable(),
+  jobDescription: z.string().max(50_000).optional().nullable(),
 });
 export const improveResumeSection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -508,7 +512,7 @@ export const improveResumeSection = createServerFn({ method: "POST" })
       `SECTION TO IMPROVE: ${focus}`,
       v.job_title ? `TARGET ROLE: ${v.job_title}` : "",
       v.company ? `TARGET COMPANY: ${v.company}` : "",
-      `JD CONTEXT:\n${(v.job_description ?? "").slice(0, 4000)}`,
+      `JD CONTEXT:\n${(data.jobDescription || v.job_description || "").slice(0, 6000)}`,
       v.custom_instructions ? `EXISTING CUSTOM INSTRUCTIONS:\n${v.custom_instructions}` : "",
       data.instructions ? `USER'S ADDITIONAL INSTRUCTIONS (highest priority, still respect truthfulness):\n${data.instructions}` : "",
       `FULL CURRENT LaTeX (return the FULL file back):\n${v.tex_content}`,
@@ -532,4 +536,140 @@ export const improveResumeSection = createServerFn({ method: "POST" })
     if (!tex.includes("\\")) throw new Error("AI did not return valid LaTeX");
     await context.supabase.from("resume_versions").update({ tex_content: tex }).eq("id", data.id);
     return { tex };
+  });
+
+const updateWithInstructionsSchema = z.object({
+  id: z.string().uuid(),
+  instructions: z.string().trim().min(3).max(6000),
+  jobDescription: z.string().max(50_000).optional().nullable(),
+});
+
+/** Improve the WHOLE resume according to free-form user instructions. */
+export const updateResumeWithInstructions = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => updateWithInstructionsSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("AI gateway not configured");
+    const { data: v } = await context.supabase
+      .from("resume_versions")
+      .select("tex_content, job_description, job_title, company")
+      .eq("id", data.id)
+      .eq("user_id", context.userId)
+      .single();
+    if (!v) throw new Error("Version not found");
+
+    const { buildProfileContext } = await import("./user-profile.server");
+    const profile = await buildProfileContext(context.supabase, context.userId);
+
+    const sys = [
+      "You are an expert LaTeX resume editor and senior technical recruiter.",
+      "HARD RULES:",
+      "- Return the FULL updated .tex file. Preserve the document class, packages, macros, layout and spacing exactly; change textual content only.",
+      "- NEVER fabricate experience, employers, dates, projects, tools, certifications, education or metrics.",
+      "- You may only use facts already present in the CURRENT RESUME or in the CANDIDATE PROFILE. If something is missing, omit it.",
+      "- Follow the USER INSTRUCTIONS as closely as truthfulness allows.",
+      "- Simple, recruiter-friendly, ATS-optimised English. Avoid AI clichés.",
+      "- Return STRICT JSON only: {\"tex\":\"<full updated file>\",\"notes\":\"<one short sentence>\"}",
+    ].join("\n");
+    const user = [
+      `USER INSTRUCTIONS:\n${data.instructions}`,
+      v.job_title ? `TARGET ROLE: ${v.job_title}` : "",
+      v.company ? `TARGET COMPANY: ${v.company}` : "",
+      (data.jobDescription || v.job_description)
+        ? `JOB DESCRIPTION:\n${(data.jobDescription || v.job_description || "").slice(0, 6000)}`
+        : "",
+      profile ? `CANDIDATE PROFILE (source of truth — never go beyond it):\n${profile}` : "",
+      `CURRENT LaTeX (return the FULL file back):\n${v.tex_content}`,
+    ].filter(Boolean).join("\n\n");
+
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (res.status === 429) throw new Error("AI rate limit reached. Try again shortly.");
+    if (res.status === 402) throw new Error("AI credits exhausted.");
+    if (!res.ok) throw new Error(`AI error ${res.status}`);
+    const j = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const c = j.choices?.[0]?.message?.content ?? "";
+    const m = c.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("AI returned invalid JSON");
+    const parsed = JSON.parse(m[0]) as { tex?: string; notes?: string };
+    const tex = (parsed.tex ?? "").trim();
+    if (!tex.includes("\\")) throw new Error("AI did not return valid LaTeX");
+    await context.supabase.from("resume_versions").update({ tex_content: tex }).eq("id", data.id).eq("user_id", context.userId);
+    return { tex, notes: parsed.notes ?? "" };
+  });
+
+const rewriteSelectionSchema = z.object({
+  id: z.string().uuid().optional().nullable(),
+  selection: z.string().min(1).max(20_000),
+  instructions: z.string().trim().min(2).max(4000),
+  jobDescription: z.string().max(50_000).optional().nullable(),
+  context: z.string().max(20_000).optional().nullable(),
+});
+
+/** Cursor-style inline edit: rewrite ONLY the selected LaTeX range. */
+export const rewriteResumeSelection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => rewriteSelectionSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("AI gateway not configured");
+
+    let jd = data.jobDescription ?? "";
+    if (data.id) {
+      const { data: v } = await context.supabase
+        .from("resume_versions")
+        .select("job_description, job_title, company")
+        .eq("id", data.id)
+        .eq("user_id", context.userId)
+        .maybeSingle();
+      if (v && !jd) jd = v.job_description ?? "";
+    }
+    const { buildProfileContext } = await import("./user-profile.server");
+    const profile = await buildProfileContext(context.supabase, context.userId);
+
+    const sys = [
+      "You rewrite ONE selected fragment of a LaTeX resume.",
+      "HARD RULES:",
+      "- Return ONLY the replacement for the SELECTED FRAGMENT. Do not return the whole document, no markdown fences, no commentary.",
+      "- Keep the same LaTeX structure/commands the fragment already uses so it still compiles inside the document.",
+      "- NEVER fabricate facts. Only reword, tighten, reorder, or emphasise what the fragment / profile already supports.",
+      "- Simple, recruiter-friendly, ATS-optimised English.",
+      "- Return STRICT JSON only: {\"replacement\":\"<latex>\"}",
+    ].join("\n");
+    const user = [
+      `USER INSTRUCTIONS:\n${data.instructions}`,
+      jd ? `JOB DESCRIPTION:\n${jd.slice(0, 5000)}` : "",
+      profile ? `CANDIDATE PROFILE (facts you may rely on):\n${profile}` : "",
+      data.context ? `SURROUNDING DOCUMENT (context only, do not return):\n${data.context.slice(0, 6000)}` : "",
+      `SELECTED FRAGMENT (rewrite exactly this):\n${data.selection}`,
+    ].filter(Boolean).join("\n\n");
+
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (res.status === 429) throw new Error("AI rate limit reached. Try again shortly.");
+    if (res.status === 402) throw new Error("AI credits exhausted.");
+    if (!res.ok) throw new Error(`AI error ${res.status}`);
+    const j = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const c = j.choices?.[0]?.message?.content ?? "";
+    const m = c.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("AI returned invalid JSON");
+    const parsed = JSON.parse(m[0]) as { replacement?: string };
+    const replacement = (parsed.replacement ?? "").replace(/^```[a-z]*\n?|```$/g, "").trim();
+    if (!replacement) throw new Error("AI returned an empty replacement");
+    return { replacement };
   });

@@ -28,8 +28,8 @@ export type Job = {
 
 const jobShape = z.object({
   id: z.string().uuid().optional().nullable(),
-  title: z.string().trim().min(1).max(200),
-  company: z.string().trim().min(1).max(200),
+  title: z.string().trim().max(200).default(""),
+  company: z.string().trim().max(200).default(""),
   location: z.string().max(200).default(""),
   work_mode: z.string().max(40).default(""),
   employment_type: z.string().max(40).default(""),
@@ -162,7 +162,7 @@ export const toggleJobBookmark = createServerFn({ method: "POST" })
 export const parseJobText = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ text: z.string().min(20).max(50_000) }).parse(d),
+    z.object({ text: z.string().max(50_000) }).parse(d),
   )
   .handler(async ({ data }) => {
     const key = process.env.LOVABLE_API_KEY;

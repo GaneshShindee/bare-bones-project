@@ -21,7 +21,7 @@ function NotificationsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Notifications</h1>
+        <h1 className="page-title">Notifications</h1>
         <p className="text-sm text-muted-foreground">Everything happening across your campaigns.</p>
       </div>
       <Card>
