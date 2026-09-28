@@ -138,7 +138,11 @@ function RecipientDetailsPage() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h1 className="page-title break-words">{recipient.name ?? recipient.email}</h1>
-            <p className="text-sm text-muted-foreground break-all">{recipient.email}{recipient.company ? ` · ${recipient.company}` : ""}</p>
+            <p className="text-sm text-muted-foreground break-all">
+              {recipient.email}
+              {recipient.role ? ` · ${recipient.role}` : ""}
+              {recipient.company ? ` · ${recipient.company}` : ""}
+            </p>
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
             {total === 0 && <Badge variant="secondary" className="self-start">Not opened</Badge>}
@@ -163,7 +167,7 @@ function RecipientDetailsPage() {
         </Card>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
         <Stat label="Total opens" value={String(total)} />
         <Stat label="First open" value={first ? new Date(first).toLocaleString() : "—"} />
         <Stat label="Last open" value={last ? new Date(last).toLocaleString() : "—"} />
@@ -197,7 +201,7 @@ function RecipientDetailsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between space-y-0">
             <CardTitle className="text-base">Complete open history ({total})</CardTitle>
@@ -273,11 +277,11 @@ function RecipientDetailsPage() {
             subject: campaign?.subject ?? "",
           },
         ]}
-        templates={(templates ?? []).map((t) => ({
+        templates={(templates ?? []).map((t: { id: string; name: string; body: string | null; is_default?: boolean }) => ({
           id: t.id,
           name: t.name,
           body: t.body ?? "",
-          is_default: !!(t as { is_default?: boolean }).is_default,
+          is_default: !!t.is_default,
         }))}
         followUpTemplateId={prefs?.followUpTemplateId ?? null}
         initialMode={replyMode}
@@ -363,6 +367,3 @@ function formatDuration(ms: number): string {
   const d = Math.floor(h / 24);
   return `${d}d ${h % 24}h`;
 }
-
-// Suppress unused import lint for icon list; used within component.
-void Eye;

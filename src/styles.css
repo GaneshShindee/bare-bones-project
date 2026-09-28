@@ -235,6 +235,10 @@
     padding-top: env(safe-area-inset-top);
   }
 
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
   @keyframes landing-rise {
     from {
       opacity: 0;

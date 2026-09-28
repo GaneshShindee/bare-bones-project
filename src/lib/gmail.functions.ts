@@ -159,7 +159,14 @@ const sendSchema = z.object({
   gmailAccountId: z.string().uuid().optional().nullable(),
   recipients: z.array(z.string()).min(1).max(2000),
   recipientMeta: z
-    .array(z.object({ email: z.string(), name: z.string().max(200).optional(), company: z.string().max(200).optional() }))
+    .array(
+      z.object({
+        email: z.string(),
+        name: z.string().max(200).optional(),
+        company: z.string().max(200).optional(),
+        role: z.string().max(200).optional(),
+      }),
+    )
     .max(2000)
     .optional(),
   subject: z.string().min(1).max(998),
@@ -218,9 +225,9 @@ export const sendEmail = createServerFn({ method: "POST" })
     const globalVars = data.variables ?? {};
 
     // Validate + dedupe recipients server-side. Skipped ones are recorded, campaign continues.
-    const metaByEmail = new Map<string, { name?: string; company?: string }>();
+    const metaByEmail = new Map<string, { name?: string; company?: string; role?: string }>();
     for (const m of data.recipientMeta ?? []) {
-      metaByEmail.set(m.email.trim().toLowerCase(), { name: m.name, company: m.company });
+      metaByEmail.set(m.email.trim().toLowerCase(), { name: m.name, company: m.company, role: m.role });
     }
     const totalRequested = data.recipients.length;
     const { valid: deduped, skipped: preSkipped } = validateEmails(data.recipients, metaByEmail);
@@ -327,6 +334,7 @@ export const sendEmail = createServerFn({ method: "POST" })
         email,
         name: m.name ?? null,
         company: m.company ?? null,
+        role: m.role ?? null,
         status: "pending" as const,
         tracking_token: trackingEnabled ? crypto.randomUUID() : null,
         pdf_tracking_token: hasPdf ? crypto.randomUUID() : null,
@@ -335,7 +343,7 @@ export const sendEmail = createServerFn({ method: "POST" })
     const { data: inserted, error: rInsErr } = await supabaseAdmin
       .from("email_recipients")
       .insert(recipientRows)
-      .select("id, email, name, company, tracking_token, pdf_tracking_token");
+      .select("id, email, name, company, role, tracking_token, pdf_tracking_token");
     if (rInsErr || !inserted) throw new Error(rInsErr?.message ?? "Failed to prepare recipients");
 
     // Send one message per recipient with a unique pixel — limited concurrency.

@@ -45,7 +45,7 @@ function AnalyticsPage() {
         </Select>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
+      <div className="grid grid-cols-5 gap-1.5 sm:gap-4">
         <Stat icon={Send} label="Sent" value={totals?.sent ?? 0} loading={isLoading} />
         <Stat icon={Users} label="Recipients" value={totals?.recipients ?? 0} loading={isLoading} />
         <Stat icon={Eye} label="Total opens" value={totals?.opens ?? 0} loading={isLoading} />
@@ -126,11 +126,11 @@ function Stat({ icon: Icon, label, value, sub, loading }: { icon: React.Componen
     <Card className="transition-orbit hover:border-primary/25">
       <div className="stat-tile">
         <Icon className="h-3.5 w-3.5 text-primary" />
-        <div className="text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
+        <div className="hidden md:block text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
         {loading ? <Skeleton className="h-7 w-16" /> : (
           <>
-            <div className="text-2xl font-semibold tracking-tight leading-none">{value}</div>
-            {sub && <div className="text-xs text-muted-foreground truncate max-w-full px-2">{sub}</div>}
+            <div className="text-sm md:text-2xl font-semibold tracking-tight leading-none truncate max-w-full px-1">{value}</div>
+            {sub && <div className="hidden md:block text-xs text-muted-foreground truncate max-w-full px-2">{sub}</div>}
           </>
         )}
       </div>

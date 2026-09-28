@@ -1,17 +1,18 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { getCampaign, listHistoryRecipients } from "@/lib/history.functions";
+import { getCampaign, listHistoryRecipients, setCampaignFollowupDay, setCampaignFollowupEnabled, type FollowupDay } from "@/lib/history.functions";
 import { listTemplates } from "@/lib/templates.functions";
 import { getUserPreferences } from "@/lib/profile.functions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Eye, Mail, Users, ArrowLeft, Flame, Paperclip, Search, FileText, Reply, CornerUpLeft, MailCheck, X } from "lucide-react";
+import { Eye, Mail, Users, ArrowLeft, Flame, Paperclip, Search, FileText, Reply, CornerUpLeft, MailCheck, X, BellRing, BellOff } from "lucide-react";
 import { StatusBadge } from "./dashboard";
 import { relativeTime } from "@/lib/user-agent";
 import { useMemo, useState } from "react";
@@ -41,10 +42,13 @@ export const Route = createFileRoute("/_authenticated/campaigns/$id")({
 function CampaignDetailsPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const fn = useServerFn(getCampaign);
   const listFn = useServerFn(listHistoryRecipients);
   const templatesFn = useServerFn(listTemplates);
   const prefsFn = useServerFn(getUserPreferences);
+  const setFollowupDayFn = useServerFn(setCampaignFollowupDay);
+  const setFollowupEnabledFn = useServerFn(setCampaignFollowupEnabled);
 
   const [filters, setFilters] = useState<HistoryFilters>(defaultHistoryFilters);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -70,6 +74,23 @@ function CampaignDetailsPage() {
   });
   const { data: templates } = useQuery({ queryKey: ["templates"], queryFn: () => templatesFn({}) });
   const { data: prefs } = useQuery({ queryKey: ["user-prefs"], queryFn: () => prefsFn() });
+
+  const toggleFollowupDay = useMutation({
+    mutationFn: (vars: { day: number; done: boolean }) =>
+      setFollowupDayFn({ data: { campaignId: id, day: vars.day, done: vars.done } }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["campaign", id] });
+      queryClient.invalidateQueries({ queryKey: ["campaign-history"] });
+    },
+  });
+
+  const toggleFollowupEnabled = useMutation({
+    mutationFn: (enabled: boolean) => setFollowupEnabledFn({ data: { campaignId: id, enabled } }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["campaign", id] });
+      queryClient.invalidateQueries({ queryKey: ["campaign-history"] });
+    },
+  });
 
   const rows = (recipientData ?? []) as HistoryRecipientRow[];
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
@@ -120,7 +141,7 @@ function CampaignDetailsPage() {
       </div>
     );
   }
-  const { campaign, recipients } = data;
+  const { campaign, recipients, followupDays } = data;
   const opened = recipients.filter((r) => (r.open_count ?? 0) > 0);
   const openRate = recipients.length ? opened.length / recipients.length : 0;
   const attachments = Array.isArray(campaign.attachments) ? (campaign.attachments as Array<{ name: string }>) : [];
@@ -141,14 +162,14 @@ function CampaignDetailsPage() {
         <StatusBadge status={campaign.status} />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-4 gap-1.5 sm:gap-3">
         <Stat label="Recipients" value={String(recipients.length)} icon={Users} />
         <Stat label="Opened" value={`${opened.length} / ${recipients.length}`} icon={Eye} />
         <Stat label="Open rate" value={`${Math.round(openRate * 100)}%`} icon={Flame} />
         <Stat label="Total opens" value={String(campaign.open_count ?? 0)} icon={Mail} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <div className="relative w-full sm:flex-1 sm:min-w-[200px]">
@@ -156,7 +177,7 @@ function CampaignDetailsPage() {
               <Input
                 value={filters.search}
                 onChange={(e) => set("search", e.target.value)}
-                placeholder="Search name, email or company…"
+                placeholder="Search name, email, role or company…"
                 className="pl-9"
               />
             </div>
@@ -235,7 +256,7 @@ function CampaignDetailsPage() {
                           >
                             <div className="font-medium truncate">{r.name ?? r.email}</div>
                             <div className="text-xs text-muted-foreground truncate">
-                              {r.email}{r.company ? ` · ${r.company}` : ""}
+                              {r.email}{r.role ? ` · ${r.role}` : ""}{r.company ? ` · ${r.company}` : ""}
                             </div>
                             <div className="text-xs text-muted-foreground mt-0.5">
                               {opens > 0
@@ -277,21 +298,32 @@ function CampaignDetailsPage() {
           </Card>
         </div>
 
-        <Card>
-          <CardHeader><CardTitle className="text-base">Email preview</CardTitle></CardHeader>
-          <CardContent className="text-sm space-y-3">
-            <div><span className="text-muted-foreground">Subject:</span> {campaign.subject}</div>
-            {attachments.length > 0 && (
-              <div className="text-xs text-muted-foreground flex items-center gap-1">
-                <Paperclip className="h-3 w-3" />{attachments.map((a) => a.name).join(", ")}
-              </div>
-            )}
-            <div className="rounded-md border border-border p-3 whitespace-pre-wrap text-xs max-h-96 overflow-auto">{campaign.body}</div>
-            {campaign.error && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">{campaign.error}</div>
-            )}
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          <FollowupTracker
+            enabled={campaign.followup_enabled}
+            days={followupDays}
+            pending={toggleFollowupDay.isPending}
+            enabledPending={toggleFollowupEnabled.isPending}
+            onToggle={(day, done) => toggleFollowupDay.mutate({ day, done })}
+            onToggleEnabled={(enabled) => toggleFollowupEnabled.mutate(enabled)}
+          />
+
+          <Card>
+            <CardHeader><CardTitle className="text-base">Email preview</CardTitle></CardHeader>
+            <CardContent className="text-sm space-y-3">
+              <div><span className="text-muted-foreground">Subject:</span> {campaign.subject}</div>
+              {attachments.length > 0 && (
+                <div className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Paperclip className="h-3 w-3" />{attachments.map((a) => a.name).join(", ")}
+                </div>
+              )}
+              <div className="rounded-md border border-border p-3 whitespace-pre-wrap text-xs max-h-96 overflow-auto">{campaign.body}</div>
+              {campaign.error && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">{campaign.error}</div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {selectedRows.length > 0 && (
@@ -328,6 +360,68 @@ function CampaignDetailsPage() {
   );
 }
 
+function FollowupTracker({
+  enabled,
+  days,
+  pending,
+  enabledPending,
+  onToggle,
+  onToggleEnabled,
+}: {
+  enabled: boolean;
+  days: FollowupDay[];
+  pending: boolean;
+  enabledPending: boolean;
+  onToggle: (day: number, done: boolean) => void;
+  onToggleEnabled: (enabled: boolean) => void;
+}) {
+  const overdueCount = days.filter((d) => d.overdue).length;
+  return (
+    <Card className={overdueCount > 0 ? "border-destructive/40" : undefined}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          {enabled ? <BellRing className="h-4 w-4 text-muted-foreground" /> : <BellOff className="h-4 w-4 text-muted-foreground" />}
+          7-day follow-up tracker
+          {overdueCount > 0 && <Badge variant="destructive" className="ml-auto">{overdueCount} due</Badge>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1">
+        <label className="flex items-center justify-between gap-2 rounded-md border border-border px-2.5 py-2 mb-2 cursor-pointer">
+          <span className="text-sm">Track follow-ups for this campaign</span>
+          <Switch checked={enabled} disabled={enabledPending} onCheckedChange={onToggleEnabled} />
+        </label>
+        {!enabled ? (
+          <p className="text-xs text-muted-foreground">
+            Follow-up tracking is off for this campaign — no reminders will show in history.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground mb-1.5">
+              Tick a day once you've followed up — the next day lights up red 24h later.
+            </p>
+            {days.map((d) => {
+              const dueLabel = new Date(d.dueAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+              return (
+                <label
+                  key={d.day}
+                  className={`flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm cursor-pointer transition-colors ${
+                    d.overdue ? "bg-destructive/10 text-destructive" : d.done ? "text-muted-foreground" : "hover:bg-accent/40"
+                  }`}
+                >
+                  <Checkbox checked={d.done} disabled={pending} onCheckedChange={(c) => onToggle(d.day, !!c)} />
+                  <span className="flex-1">Day {d.day} follow-up</span>
+                  <span className="text-xs text-muted-foreground">{dueLabel}</span>
+                  {d.overdue && <BellRing className="h-3.5 w-3.5 shrink-0" />}
+                </label>
+              );
+            })}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Stat({ label, value, icon: Icon }: { label: string; value: string; icon: React.ComponentType<{ className?: string }> }) {
   return (
     <Card className="transition-orbit hover:border-primary/25">
@@ -335,8 +429,8 @@ function Stat({ label, value, icon: Icon }: { label: string; value: string; icon
         <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary">
           <Icon className="h-3.5 w-3.5" />
         </div>
-        <div className="text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
-        <div className="text-xl font-semibold tracking-tight leading-none">{value}</div>
+        <div className="hidden md:block text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
+        <div className="text-sm md:text-xl font-semibold tracking-tight leading-none truncate max-w-full px-1">{value}</div>
       </div>
     </Card>
   );

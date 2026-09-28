@@ -3,10 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   listJobs,
+  listJobFilterOptions,
   upsertJob,
   deleteJob,
   toggleJobBookmark,
   parseJobText,
+  parseJobFromUrl,
   type Job,
 } from "@/lib/jobs.functions";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,14 +18,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
-import { Bookmark, BookmarkCheck, Briefcase, Building2, MapPin, Plus, Search, Send, Share2, Sparkles, Trash2, Wand2, ExternalLink, Pencil, CalendarDays } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Bookmark, BookmarkCheck, Briefcase, Building2, MapPin, Plus, Search, Send, Share2, Sparkles, Trash2, Wand2, ExternalLink, Pencil, CalendarDays, Link2, RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { relativeTime } from "@/lib/user-agent";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { JobSourcesDialog } from "@/components/job-sources-dialog";
+import { getLinkedResumeVersionId } from "@/lib/job-resume-link";
 
 export const Route = createFileRoute("/_authenticated/jobs")({
   head: () => ({ meta: [{ title: "Jobs Board — Smart Email Sender" }] }),
@@ -62,35 +67,72 @@ function toArr(s: string): string[] {
   return s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
 }
 
+const JOBS_PAGE_SIZE = 30;
+
 function JobsPage() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const listFn = useServerFn(listJobs);
+  const filterOptionsFn = useServerFn(listJobFilterOptions);
   const upsertFn = useServerFn(upsertJob);
   const delFn = useServerFn(deleteJob);
   const bookmarkFn = useServerFn(toggleJobBookmark);
   const parseFn = useServerFn(parseJobText);
+  const parseUrlFn = useServerFn(parseJobFromUrl);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "mine" | "bookmarked" | "remote" | "hybrid" | "onsite">("all");
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "week" | "month">("all");
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [experienceFilter, setExperienceFilter] = useState<string>("all");
+  const [page, setPage] = useState(1);
   const [editOpen, setEditOpen] = useState(false);
   const [parseOpen, setParseOpen] = useState(false);
+  const [urlOpen, setUrlOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [parseText, setParseText] = useState("");
+  const [importUrl, setImportUrl] = useState("");
   const [form, setForm] = useState<EditForm>(blankForm());
 
+  // Every filter/search setter resets back to page 1, since the current page may no longer exist.
+  const setSearchAndReset = (v: string) => { setSearch(v); setPage(1); };
+  const setFilterAndReset = (v: typeof filter) => { setFilter(v); setPage(1); };
+  const setDateFilterAndReset = (v: typeof dateFilter) => { setDateFilter(v); setPage(1); };
+  const setRoleFilterAndReset = (v: string) => { setRoleFilter(v); setPage(1); };
+  const setExperienceFilterAndReset = (v: string) => { setExperienceFilter(v); setPage(1); };
+  const clearAdvancedFilters = () => {
+    setDateFilter("all");
+    setRoleFilter("all");
+    setExperienceFilter("all");
+    setPage(1);
+  };
+
+  const onlyMine = filter === "mine" || undefined;
+  const bookmarkedOnly = filter === "bookmarked" || undefined;
+  const workMode = (filter === "remote" || filter === "hybrid" || filter === "onsite") ? filter : undefined;
+
   const jobsQ = useQuery({
-    queryKey: ["jobs", filter, search],
+    queryKey: ["jobs", filter, search, dateFilter, roleFilter, experienceFilter, page],
     queryFn: () => listFn({
       data: {
         search: search || undefined,
-        onlyMine: filter === "mine" || undefined,
-        bookmarkedOnly: filter === "bookmarked" || undefined,
-        workMode: (filter === "remote" || filter === "hybrid" || filter === "onsite") ? filter : undefined,
+        onlyMine,
+        bookmarkedOnly,
+        workMode,
+        dateFilter,
+        role: roleFilter !== "all" ? roleFilter : undefined,
+        experience: experienceFilter !== "all" ? experienceFilter : undefined,
+        page,
+        pageSize: JOBS_PAGE_SIZE,
       },
     }),
+  });
+
+  // Role/experience dropdown options: contextual to search/mine/bookmarked/date, but independent
+  // of pagination (and of role/experience themselves) so a 30-row page doesn't starve the list.
+  const filterOptionsQ = useQuery({
+    queryKey: ["job-filter-options", filter, search, dateFilter],
+    queryFn: () => filterOptionsFn({ data: { search: search || undefined, onlyMine, bookmarkedOnly, workMode, dateFilter } }),
   });
 
   const save = useMutation({
@@ -108,7 +150,12 @@ function JobsPage() {
         is_public: f.is_public,
       },
     }),
-    onSuccess: () => { toast.success("Job saved"); setEditOpen(false); qc.invalidateQueries({ queryKey: ["jobs"] }); },
+    onSuccess: () => {
+      toast.success("Job saved");
+      setEditOpen(false);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["job-filter-options"] });
+    },
     onError: (e) => toast.error("Save failed", { description: (e as Error).message }),
   });
 
@@ -134,15 +181,48 @@ function JobsPage() {
     onError: (e) => toast.error("AI parse failed", { description: (e as Error).message }),
   });
 
+  const parseUrl = useMutation({
+    mutationFn: (url: string) => parseUrlFn({ data: { url } }),
+    onSuccess: (p) => {
+      setForm({
+        id: null,
+        title: p.title, company: p.company, location: p.location,
+        work_mode: p.work_mode, employment_type: p.employment_type,
+        experience: p.experience, salary: p.salary, description: p.description,
+        responsibilities: p.responsibilities.join("\n"),
+        skills: p.skills.join(", "),
+        technologies: p.technologies.join(", "),
+        tags: p.tags.join(", "),
+        recruiter_email: p.recruiter_email,
+        apply_url: p.apply_url,
+        company_website: p.company_website,
+        source_url: p.source_url,
+        is_public: true,
+      });
+      setUrlOpen(false);
+      setImportUrl("");
+      setEditOpen(true);
+      toast.success("Imported from URL — review and publish");
+    },
+    onError: (e) => toast.error("URL import failed", { description: (e as Error).message }),
+  });
+
   const del = useMutation({
     mutationFn: (id: string) => delFn({ data: { id } }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["jobs"] }); toast.success("Job removed"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["job-filter-options"] });
+      toast.success("Job removed");
+    },
   });
 
   const bookmark = useMutation({
     mutationFn: ({ jobId, bookmark }: { jobId: string; bookmark: boolean }) =>
       bookmarkFn({ data: { jobId, bookmark } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["job-filter-options"] });
+    },
   });
 
   const share = async (job: Job) => {
@@ -171,13 +251,22 @@ function JobsPage() {
   };
 
   const generateResume = (j: Job) => {
-    const params = new URLSearchParams({
-      jobId: j.id,
-      title: j.title,
-      company: j.company,
-      jd: j.description || [j.title, j.company, j.location, j.description, j.responsibilities.join("\n"), "Skills: " + j.skills.join(", ")].filter(Boolean).join("\n"),
+    const linked = getLinkedResumeVersionId({ jobId: j.id, company: j.company, role: j.title });
+    if (linked) {
+      nav({
+        to: "/resume-studio/$id",
+        params: { id: linked },
+      });
+      return;
+    }
+    nav({
+      to: "/resume-studio",
+      search: {
+        jobId: j.id,
+        title: j.title,
+        company: j.company,
+      } as never,
     });
-    nav({ to: "/resume-studio", search: Object.fromEntries(params) as never });
   };
 
   const generateEmail = (j: Job) => {
@@ -185,8 +274,8 @@ function JobsPage() {
       to: "/send",
       search: {
         to: j.recruiter_email || undefined,
-        name: "",
         company: j.company,
+        jobId: j.id,
       } as never,
     });
   };
@@ -196,54 +285,57 @@ function JobsPage() {
     { key: "remote", label: "Remote" }, { key: "hybrid", label: "Hybrid" }, { key: "onsite", label: "On-site" },
   ];
 
-  const jobs = jobsQ.data ?? [];
-
-  const roleOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const j of jobs) {
-      const t = j.title.trim();
-      if (t) set.add(t);
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [jobs]);
-
-  const experienceOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const j of jobs) {
-      const e = j.experience.trim();
-      if (e) set.add(e);
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [jobs]);
-
-  const shown = useMemo(() => {
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const weekAgo = startOfToday - 6 * 24 * 60 * 60 * 1000;
-    const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()).getTime();
-
-    return jobs.filter((j) => {
-      const created = new Date(j.created_at).getTime();
-      if (dateFilter === "today" && created < startOfToday) return false;
-      if (dateFilter === "week" && created < weekAgo) return false;
-      if (dateFilter === "month" && created < monthAgo) return false;
-      if (roleFilter !== "all" && j.title.trim() !== roleFilter) return false;
-      if (experienceFilter !== "all" && j.experience.trim() !== experienceFilter) return false;
-      return true;
-    });
-  }, [jobs, dateFilter, roleFilter, experienceFilter]);
+  const shown = jobsQ.data?.rows ?? [];
+  const total = jobsQ.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / JOBS_PAGE_SIZE));
+  const roleOptions = filterOptionsQ.data?.roles ?? [];
+  const experienceOptions = filterOptionsQ.data?.experiences ?? [];
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="page-title flex items-center gap-2"><Briefcase className="h-4 w-4 shrink-0" /> Community Jobs Board</h1>
-          <p className="text-sm text-muted-foreground">Discover opportunities shared by other users. Generate tailored resumes in one click.</p>
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
+        <div className="flex gap-1.5 sm:gap-2 w-full sm:w-auto flex-nowrap sm:flex-wrap">
+          <Button variant="outline" className="flex-1 sm:flex-none px-2 sm:px-4" onClick={() => setSourcesOpen(true)}>
+            <RefreshCw className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">Sync sources</span>
+          </Button>
+          <Dialog open={urlOpen} onOpenChange={setUrlOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="flex-1 sm:flex-none px-2 sm:px-4">
+                <Link2 className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">Import URL</span>
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader><DialogTitle>Import job from URL</DialogTitle></DialogHeader>
+              <p className="text-xs text-muted-foreground">
+                Paste a Greenhouse, Lever, LinkedIn, or company careers link. We fetch the page, extract fields with AI, then you review before publishing.
+              </p>
+              <Input
+                placeholder="https://boards.greenhouse.io/…/jobs/…"
+                value={importUrl}
+                onChange={(e) => setImportUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && importUrl.trim()) parseUrl.mutate(importUrl.trim());
+                }}
+              />
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setUrlOpen(false)}>Cancel</Button>
+                <Button
+                  onClick={() => parseUrl.mutate(importUrl.trim())}
+                  disabled={parseUrl.isPending || !importUrl.trim()}
+                >
+                  <Wand2 className="h-4 w-4 mr-1" /> {parseUrl.isPending ? "Fetching…" : "Fetch & extract"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <Dialog open={parseOpen} onOpenChange={setParseOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="flex-1 sm:flex-none"><Sparkles className="h-4 w-4 mr-1" /> AI Parse</Button>
+              <Button variant="outline" className="flex-1 sm:flex-none px-2 sm:px-4">
+                <Sparkles className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">AI Parse</span>
+              </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-2xl">
               <DialogHeader><DialogTitle>Paste job info</DialogTitle></DialogHeader>
@@ -261,8 +353,8 @@ function JobsPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <Button className="flex-1 sm:flex-none" onClick={() => { setForm(blankForm()); setEditOpen(true); }}>
-            <Plus className="h-4 w-4 mr-1" /> Publish job
+          <Button className="flex-1 sm:flex-none px-2 sm:px-4" onClick={() => { setForm(blankForm()); setEditOpen(true); }}>
+            <Plus className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">Publish job</span>
           </Button>
         </div>
       </div>
@@ -272,61 +364,59 @@ function JobsPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <div className="relative w-full sm:flex-1 sm:min-w-[220px]">
               <Search className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
-              <Input className="pl-8" placeholder="Search by title, company, location…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <Input className="pl-8" placeholder="Search by title, company, location…" value={search} onChange={(e) => setSearchAndReset(e.target.value)} />
             </div>
             <div className="flex flex-wrap gap-1">
               {filters.map((f) => (
-                <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
+                <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilterAndReset(f.key)}>
                   {f.label}
                 </Button>
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2">
-            <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as typeof dateFilter)}>
-              <SelectTrigger className="w-full sm:w-[150px] h-9">
-                <CalendarDays className="h-3.5 w-3.5 mr-1.5 shrink-0 opacity-60" />
-                <SelectValue placeholder="Added" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Any date</SelectItem>
-                <SelectItem value="today">Added today</SelectItem>
-                <SelectItem value="week">Last 7 days</SelectItem>
-                <SelectItem value="month">Last 30 days</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={roleFilter} onValueChange={setRoleFilter}>
-              <SelectTrigger className="w-full sm:w-[200px] h-9">
-                <SelectValue placeholder="Role" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All roles</SelectItem>
-                {roleOptions.map((r) => (
-                  <SelectItem key={r} value={r}>{r}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={experienceFilter} onValueChange={setExperienceFilter}>
-              <SelectTrigger className="w-full sm:w-[180px] h-9">
-                <SelectValue placeholder="Experience" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All experience</SelectItem>
-                {experienceOptions.map((e) => (
-                  <SelectItem key={e} value={e}>{e}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:gap-2">
+              <Select value={dateFilter} onValueChange={(v) => setDateFilterAndReset(v as typeof dateFilter)}>
+                <SelectTrigger className="w-full sm:w-[150px] h-9 px-2 sm:px-3.5">
+                  <CalendarDays className="h-3.5 w-3.5 mr-1 sm:mr-1.5 shrink-0 opacity-60" />
+                  <SelectValue placeholder="Added" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Any date</SelectItem>
+                  <SelectItem value="today">Added today</SelectItem>
+                  <SelectItem value="week">Last 7 days</SelectItem>
+                  <SelectItem value="month">Last 30 days</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={roleFilter} onValueChange={setRoleFilterAndReset}>
+                <SelectTrigger className="w-full sm:w-[200px] h-9 px-2 sm:px-3.5">
+                  <SelectValue placeholder="Role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All roles</SelectItem>
+                  {roleOptions.map((r) => (
+                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={experienceFilter} onValueChange={setExperienceFilterAndReset}>
+                <SelectTrigger className="w-full sm:w-[180px] h-9 px-2 sm:px-3.5">
+                  <SelectValue placeholder="Experience" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All experience</SelectItem>
+                  {experienceOptions.map((e) => (
+                    <SelectItem key={e} value={e}>{e}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             {(dateFilter !== "all" || roleFilter !== "all" || experienceFilter !== "all") && (
               <Button
                 size="sm"
                 variant="ghost"
                 className="w-full sm:w-auto"
-                onClick={() => {
-                  setDateFilter("all");
-                  setRoleFilter("all");
-                  setExperienceFilter("all");
-                }}
+                onClick={clearAdvancedFilters}
               >
                 Clear filters
               </Button>
@@ -336,13 +426,13 @@ function JobsPage() {
       </Card>
 
       {jobsQ.isLoading ? (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-40" />)}
         </div>
       ) : shown.length === 0 ? (
         <Card><CardContent className="py-16 text-center text-sm text-muted-foreground">No jobs yet. Publish one or use AI Parse.</CardContent></Card>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {shown.map((j) => {
             const bookmarked = (j as Job & { bookmarked: boolean }).bookmarked;
             const isMine = (j as Job & { isMine: boolean }).isMine;
@@ -395,10 +485,38 @@ function JobsPage() {
         </div>
       )}
 
+      {total > 0 && (
+        <div className="flex flex-col items-center gap-2 sm:flex-row sm:justify-between">
+          <p className="text-xs text-muted-foreground">
+            Page {page} of {totalPages} · {total} job{total === 1 ? "" : "s"}
+          </p>
+          <Pagination className="mx-0 w-auto">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  href="#"
+                  aria-disabled={page <= 1}
+                  className={page <= 1 ? "pointer-events-none opacity-50" : undefined}
+                  onClick={(e) => { e.preventDefault(); setPage((p) => Math.max(1, p - 1)); }}
+                />
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  aria-disabled={page >= totalPages}
+                  className={page >= totalPages ? "pointer-events-none opacity-50" : undefined}
+                  onClick={(e) => { e.preventDefault(); setPage((p) => Math.min(totalPages, p + 1)); }}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
+      )}
+
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{form.id ? "Edit job" : "Publish new job"}</DialogTitle></DialogHeader>
-          <div className="grid gap-3 md:grid-cols-2">
+        <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col p-0">
+          <DialogHeader className="px-6 py-4 border-b"><DialogTitle>{form.id ? "Edit job" : "Publish new job"}</DialogTitle></DialogHeader>
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 grid grid-cols-1 gap-3 md:grid-cols-2">
             <Field label="Title"><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
             <Field label="Company"><Input value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} /></Field>
             <Field label="Location"><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
@@ -409,6 +527,7 @@ function JobsPage() {
             <Field label="Recruiter email"><Input value={form.recruiter_email} onChange={(e) => setForm({ ...form, recruiter_email: e.target.value })} /></Field>
             <Field label="Apply URL"><Input value={form.apply_url} onChange={(e) => setForm({ ...form, apply_url: e.target.value })} /></Field>
             <Field label="Company website"><Input value={form.company_website} onChange={(e) => setForm({ ...form, company_website: e.target.value })} /></Field>
+            <div className="md:col-span-2"><Field label="Source URL"><Input value={form.source_url} onChange={(e) => setForm({ ...form, source_url: e.target.value })} placeholder="Original posting link" /></Field></div>
             <div className="md:col-span-2"><Field label="Description"><Textarea rows={6} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field></div>
             <div className="md:col-span-2"><Field label="Responsibilities (one per line)"><Textarea rows={4} value={form.responsibilities} onChange={(e) => setForm({ ...form, responsibilities: e.target.value })} /></Field></div>
             <Field label="Skills (comma-separated)"><Textarea rows={2} value={form.skills} onChange={(e) => setForm({ ...form, skills: e.target.value })} /></Field>
@@ -419,7 +538,7 @@ function JobsPage() {
               Share publicly with the community
             </label>
           </div>
-          <DialogFooter>
+          <DialogFooter className="px-6 py-3 border-t">
             <Button variant="ghost" onClick={() => setEditOpen(false)}>Cancel</Button>
             <Button onClick={() => save.mutate(form)} disabled={save.isPending}>
               {save.isPending ? "Saving…" : form.id ? "Save changes" : "Publish"}
@@ -427,6 +546,8 @@ function JobsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <JobSourcesDialog open={sourcesOpen} onOpenChange={setSourcesOpen} />
     </div>
   );
 }

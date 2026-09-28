@@ -27,6 +27,7 @@ export type HistoryRecipientRow = {
   email: string;
   name: string | null;
   company: string | null;
+  role: string | null;
   subject: string;
   template_name: string | null;
   sender_email: string | null;
@@ -82,7 +83,7 @@ export function matchesResume(pdfViewCount: number, f: ResumeFilter): boolean {
 export function matchesSearch(row: HistoryRecipientRow, search: string): boolean {
   const q = search.trim().toLowerCase();
   if (!q) return true;
-  return [row.name, row.email, row.subject, row.company]
+  return [row.name, row.email, row.subject, row.company, row.role]
     .some((v) => (v ?? "").toLowerCase().includes(q));
 }
 

@@ -1,4 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { NAV_ITEMS } from "@/lib/nav-items";
+import { BOTTOM_NAV_URLS } from "@/components/mobile-bottom-nav";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { dashboardStats, listCampaigns, type CampaignSummary } from "@/lib/history.functions";
@@ -9,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import {
   Mail,
   Send,
@@ -63,14 +67,9 @@ function Dashboard() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="page-title">Dashboard</h1>
-          <p className="page-subtitle">Overview of your sending activity.</p>
-        </div>
-        <Button onClick={() => navigate({ to: "/send" })}>
-          <Send className="h-4 w-4" />Quick send
-        </Button>
+      <div>
+        <h1 className="page-title">Dashboard</h1>
+        <p className="page-subtitle">Overview of your sending activity.</p>
       </div>
 
       {gmail.data && !gmail.data.connected && (
@@ -92,7 +91,7 @@ function Dashboard() {
         </Card>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-5">
+      <div className="grid grid-cols-5 gap-1.5 sm:gap-3">
         <StatCard icon={Mail} label="Gmail" value={gmail.data?.connected ? "Connected" : "Not connected"} sub={gmail.data?.email ?? "—"} loading={gmail.isLoading} />
         <StatCard icon={Send} label="Total sent" value={stats.data?.sent ?? 0} loading={stats.isLoading} />
         <StatCard
@@ -104,6 +103,28 @@ function Dashboard() {
         />
         <StatCard icon={AlertTriangle} label="Failed" value={stats.data?.failed ?? 0} loading={stats.isLoading} />
         <StatCard icon={LayoutTemplate} label="Templates" value={stats.data?.templates ?? 0} loading={stats.isLoading} />
+      </div>
+
+      <div>
+        <h2 className="text-sm font-semibold tracking-tight mb-3">Explore</h2>
+        <TooltipProvider delayDuration={200}>
+          <div className="grid grid-cols-8 gap-1.5 sm:gap-2">
+            {NAV_ITEMS.filter((item) => !BOTTOM_NAV_URLS.includes(item.url)).map((item) => (
+              <Tooltip key={item.url}>
+                <TooltipTrigger asChild>
+                  <Link
+                    to={item.url}
+                    aria-label={item.title}
+                    className="group flex aspect-square items-center justify-center rounded-lg border border-border bg-card transition-orbit hover:border-primary/25 hover:shadow-[var(--shadow-lift)]"
+                  >
+                    <item.icon className="h-4 w-4 text-primary" strokeWidth={1.85} />
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>{item.title}</TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+        </TooltipProvider>
       </div>
 
       <Card>
@@ -149,8 +170,11 @@ function Dashboard() {
                   onClick={() => navigate({ to: "/campaigns/$id", params: { id: c.id } })}
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{c.subject}</div>
+                    <div className="text-sm font-medium truncate">
+                      {c.role && c.company ? `${c.role} · ${c.company}` : c.role || c.company || c.subject}
+                    </div>
                     <div className="text-xs text-muted-foreground truncate mt-0.5">
+                      {c.role || c.company ? `${c.subject} · ` : ""}
                       {new Date(c.sent_at).toLocaleString()}
                       {c.sender_email ? ` · from ${c.sender_email}` : ""}
                       {c.template_name ? ` · ${c.template_name}` : ""}
@@ -205,18 +229,32 @@ function Dashboard() {
   );
 }
 
-function StatCard({ icon: Icon, label, value, sub, loading }: { icon: any; label: string; value: any; sub?: string; loading?: boolean }) {
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  loading,
+  className,
+}: {
+  icon: any;
+  label: string;
+  value: any;
+  sub?: string;
+  loading?: boolean;
+  className?: string;
+}) {
   return (
-    <Card className="transition-orbit hover:border-primary/25 hover:shadow-[var(--shadow-lift)]">
+    <Card className={cn("transition-orbit hover:border-primary/25 hover:shadow-[var(--shadow-lift)]", className)}>
       <div className="stat-tile">
         <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary">
           <Icon className="h-3.5 w-3.5" strokeWidth={1.85} />
         </div>
-        <div className="text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
+        <div className="hidden md:block text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
         {loading ? <Skeleton className="h-7 w-16" /> : (
           <>
-            <div className="text-2xl font-semibold tracking-tight leading-none">{value}</div>
-            {sub && <div className="text-xs text-muted-foreground truncate max-w-full px-2">{sub}</div>}
+            <div className="text-sm md:text-2xl font-semibold tracking-tight leading-none truncate max-w-full px-1">{value}</div>
+            {sub && <div className="hidden md:block text-xs text-muted-foreground truncate max-w-full px-2">{sub}</div>}
           </>
         )}
       </div>

@@ -23,7 +23,17 @@ import {
 } from "lucide-react";
 import logoAsset from "@/assets/logo.png.asset.json";
 
+import { redirect } from "@tanstack/react-router";
+import { supabase } from "@/integrations/supabase/client";
+
 export const Route = createFileRoute("/")({
+  loader: async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session) {
+      return redirect({ to: "/dashboard" });
+    }
+    return null;
+  },
   head: () => ({
     meta: [
       { title: "Smart Email Sender — Send Gmail emails from templates" },
@@ -69,10 +79,10 @@ const activity = [
 ];
 
 function Index() {
-  const [openFaq, setOpenFaq] = useState<number | null>(0);
+const [openFaq, setOpenFaq] = useState<number | null>(0);
 
   return (
-    <div className="min-h-screen orbit-mesh text-foreground overflow-x-hidden">
+    <div className="md:min-h-screen orbit-mesh text-foreground overflow-x-hidden">
       <header className="border-b border-border/50 glass-header sticky top-0 z-20">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5 gap-4">
           <div className="flex items-center gap-2.5 text-[15px] font-semibold tracking-tight shrink-0">
@@ -165,7 +175,7 @@ function Index() {
             </p>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-12 items-stretch">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 items-stretch">
             <div className="lg:col-span-5 rounded-2xl border border-border/80 bg-card p-5 shadow-[var(--shadow-soft)] landing-rise landing-rise-delay-1">
               <div className="flex items-center gap-2 text-sm font-semibold mb-4">
                 <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary">
@@ -314,7 +324,7 @@ function Index() {
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[
               { n: "01", icon: Link2, title: "Connect Gmail", desc: "Grant send access once. Tokens refresh in the background." },
               { n: "02", icon: LayoutTemplate, title: "Build a template", desc: "Write once with {{placeholders}} for names, roles, and companies." },
@@ -337,7 +347,7 @@ function Index() {
 
         {/* Dashboard mock + tracking */}
         <section className="mx-auto max-w-6xl px-6 pb-16 md:pb-24">
-          <div className="grid gap-6 lg:grid-cols-2 items-center">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 items-center">
             <div className="order-2 lg:order-1">
               <div className="relative overflow-hidden rounded-2xl border border-border/70 shadow-[var(--shadow-lift)] bg-card">
                 <img
@@ -388,7 +398,7 @@ function Index() {
                 From templates to analytics — without juggling five tools.
               </p>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[
                 { icon: LayoutTemplate, title: "Reusable templates", desc: "Save subjects and bodies once. Use {{placeholders}} that get filled at send time." },
                 { icon: Send, title: "Sends from your inbox", desc: "Emails go through your Gmail account, so replies land where they should." },

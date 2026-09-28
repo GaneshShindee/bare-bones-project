@@ -14,6 +14,38 @@ export type Database = {
   }
   public: {
     Tables: {
+      campaign_followup_days: {
+        Row: {
+          day_number: number
+          done_at: string
+          email_history_id: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          day_number: number
+          done_at?: string
+          email_history_id: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          day_number?: number
+          done_at?: string
+          email_history_id?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_followup_days_email_history_id_fkey"
+            columns: ["email_history_id"]
+            isOneToOne: false
+            referencedRelation: "email_history"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       email_bounces: {
         Row: {
           bounce_type: string
@@ -142,6 +174,7 @@ export type Database = {
           body_html: string | null
           error: string | null
           first_opened_at: string | null
+          followup_enabled: boolean
           gmail_account_id: string | null
           gmail_message_id: string | null
           gmail_thread_id: string | null
@@ -174,6 +207,7 @@ export type Database = {
           body_html?: string | null
           error?: string | null
           first_opened_at?: string | null
+          followup_enabled?: boolean
           gmail_account_id?: string | null
           gmail_message_id?: string | null
           gmail_thread_id?: string | null
@@ -206,6 +240,7 @@ export type Database = {
           body_html?: string | null
           error?: string | null
           first_opened_at?: string | null
+          followup_enabled?: boolean
           gmail_account_id?: string | null
           gmail_message_id?: string | null
           gmail_thread_id?: string | null
@@ -344,6 +379,7 @@ export type Database = {
           pdf_view_count: number
           replied_at: string | null
           rfc_message_id: string | null
+          role: string | null
           status: string
           tracking_token: string | null
           user_id: string
@@ -375,6 +411,7 @@ export type Database = {
           pdf_view_count?: number
           replied_at?: string | null
           rfc_message_id?: string | null
+          role?: string | null
           status?: string
           tracking_token?: string | null
           user_id: string
@@ -406,6 +443,7 @@ export type Database = {
           pdf_view_count?: number
           replied_at?: string | null
           rfc_message_id?: string | null
+          role?: string | null
           status?: string
           tracking_token?: string | null
           user_id?: string
@@ -746,6 +784,48 @@ export type Database = {
           },
         ]
       }
+      job_sources: {
+        Row: {
+          config: Json
+          created_at: string
+          enabled: boolean
+          id: string
+          kind: string
+          last_error: string | null
+          last_synced_at: string | null
+          name: string
+          updated_at: string
+          user_id: string
+          webhook_secret: string | null
+        }
+        Insert: {
+          config?: Json
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          kind: string
+          last_error?: string | null
+          last_synced_at?: string | null
+          name?: string
+          updated_at?: string
+          user_id: string
+          webhook_secret?: string | null
+        }
+        Update: {
+          config?: Json
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          kind?: string
+          last_error?: string | null
+          last_synced_at?: string | null
+          name?: string
+          updated_at?: string
+          user_id?: string
+          webhook_secret?: string | null
+        }
+        Relationships: []
+      }
       jobs: {
         Row: {
           apply_url: string | null
@@ -755,6 +835,7 @@ export type Database = {
           description: string | null
           employment_type: string | null
           experience: string | null
+          external_id: string | null
           id: string
           is_public: boolean
           location: string | null
@@ -778,6 +859,7 @@ export type Database = {
           description?: string | null
           employment_type?: string | null
           experience?: string | null
+          external_id?: string | null
           id?: string
           is_public?: boolean
           location?: string | null
@@ -801,6 +883,7 @@ export type Database = {
           description?: string | null
           employment_type?: string | null
           experience?: string | null
+          external_id?: string | null
           id?: string
           is_public?: boolean
           location?: string | null
@@ -994,6 +1077,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          active_ai_provider: string
           avatar_url: string | null
           compose_prefs: Json
           created_at: string
@@ -1002,11 +1086,15 @@ export type Database = {
           email: string | null
           follow_up_template_id: string | null
           full_name: string | null
+          gemini_api_key: string | null
+          gemini_api_key_enabled: boolean
+          grok_api_key: string | null
           id: string
           tracking_open_enabled: boolean
           updated_at: string
         }
         Insert: {
+          active_ai_provider?: string
           avatar_url?: string | null
           compose_prefs?: Json
           created_at?: string
@@ -1015,11 +1103,15 @@ export type Database = {
           email?: string | null
           follow_up_template_id?: string | null
           full_name?: string | null
+          gemini_api_key?: string | null
+          gemini_api_key_enabled?: boolean
+          grok_api_key?: string | null
           id: string
           tracking_open_enabled?: boolean
           updated_at?: string
         }
         Update: {
+          active_ai_provider?: string
           avatar_url?: string | null
           compose_prefs?: Json
           created_at?: string
@@ -1028,6 +1120,9 @@ export type Database = {
           email?: string | null
           follow_up_template_id?: string | null
           full_name?: string | null
+          gemini_api_key?: string | null
+          gemini_api_key_enabled?: boolean
+          grok_api_key?: string | null
           id?: string
           tracking_open_enabled?: boolean
           updated_at?: string
@@ -1190,12 +1285,14 @@ export type Database = {
       resumes: {
         Row: {
           created_at: string
+          folder: string | null
           id: string
           is_default: boolean
           mime_type: string
           name: string
           original_filename: string
           size_bytes: number
+          source_resume_version_id: string | null
           storage_path: string
           updated_at: string
           user_id: string
@@ -1203,12 +1300,14 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          folder?: string | null
           id?: string
           is_default?: boolean
           mime_type: string
           name: string
           original_filename: string
           size_bytes: number
+          source_resume_version_id?: string | null
           storage_path: string
           updated_at?: string
           user_id: string
@@ -1216,18 +1315,28 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          folder?: string | null
           id?: string
           is_default?: boolean
           mime_type?: string
           name?: string
           original_filename?: string
           size_bytes?: number
+          source_resume_version_id?: string | null
           storage_path?: string
           updated_at?: string
           user_id?: string
           version?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "resumes_source_resume_version_id_fkey"
+            columns: ["source_resume_version_id"]
+            isOneToOne: false
+            referencedRelation: "resume_versions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       send_jobs: {
         Row: {

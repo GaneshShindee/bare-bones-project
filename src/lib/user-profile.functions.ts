@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { PROFILE_SECTIONS, type ProfileDetails, type ProfileEntry } from "@/lib/user-profile";
+import { aiChatJson } from "@/lib/ai-gateway";
+import { parseAiJson } from "@/lib/parse-ai-json";
 
 const sectionEnum = z.enum(PROFILE_SECTIONS);
 
@@ -175,9 +177,6 @@ export const parseResumeToProfileDraft = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => parseSchema.parse(d))
   .handler(async ({ data, context }) => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("AI gateway not configured");
-
     let source = (data.text ?? "").trim();
     if (!source && data.resumeProjectId) {
       const { data: proj } = await context.supabase
@@ -207,29 +206,16 @@ export const parseResumeToProfileDraft = createServerFn({ method: "POST" })
       "For 'skill' entries: title = category name, tags = the individual skills.",
     ].join("\n");
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: sys },
-          { role: "user", content: source.slice(0, 60_000) },
-        ],
-        response_format: { type: "json_object" },
-      }),
+    const c = await aiChatJson({
+      supabase: context.supabase,
+      userId: context.userId,
+      system: sys,
+      user: source.slice(0, 60_000),
     });
-    if (res.status === 429) throw new Error("AI rate limit reached. Try again shortly.");
-    if (res.status === 402) throw new Error("AI credits exhausted.");
-    if (!res.ok) throw new Error(`AI error ${res.status}`);
-    const j = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const c = j.choices?.[0]?.message?.content ?? "";
-    const m = c.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error("AI returned invalid JSON");
-    const parsed = JSON.parse(m[0]) as {
+    const parsed = parseAiJson<{
       details?: Partial<ProfileDetails>;
       entries?: Array<Partial<ProfileEntry> & { section?: string }>;
-    };
+    }>(c);
 
     const entries = (parsed.entries ?? [])
       .filter((e) => e.section && (PROFILE_SECTIONS as readonly string[]).includes(e.section))

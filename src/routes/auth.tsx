@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { lovable } from "@/integrations/lovable";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,6 +10,14 @@ import logoAsset from "@/assets/logo.png.asset.json";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/auth")({
+  // Redirect to dashboard if already authenticated
+  loader: async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session) {
+      return redirect({ to: "/dashboard" });
+    }
+    return null;
+  },
   head: () => ({ meta: [{ title: "Sign in — Smart Email Sender" }] }),
   component: AuthPage,
 });

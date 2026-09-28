@@ -130,7 +130,7 @@ function PersonalTab({ details, onSaved }: { details: ProfileDetails; onSaved: (
     <Card>
       <CardHeader className="pb-3"><CardTitle className="text-base">Personal information</CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {field("first_name", "First name")}
           {field("last_name", "Last name")}
           {field("email", "Email")}
@@ -287,7 +287,7 @@ function EntryDialog({
     <Dialog open={!!entry} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{form.id ? `Edit ${meta.singular}` : `Add ${meta.singular}`}</DialogTitle></DialogHeader>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {has("title") && (
             <div className="md:col-span-2">
               <Label className="text-xs">{meta.titleLabel}</Label>

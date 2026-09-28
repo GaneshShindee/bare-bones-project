@@ -5,8 +5,12 @@ import {
   listResumeProjects,
   createResumeProject,
   deleteResumeProject,
+  setDefaultResumeProject,
   listResumeVersions,
   generateResumeVersion,
+  duplicateResumeProjectAsVersion,
+  duplicateResumeVersion,
+  deleteResumeVersion,
 } from "@/lib/resume-studio.functions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,12 +21,15 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "../dashboard";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Trash2, Wand2, FileText, Sparkles, ArrowRight, Upload } from "lucide-react";
+import { Plus, Trash2, Wand2, FileText, Sparkles, Pencil, Upload, Copy, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { fileToBase64 } from "@/lib/resumes";
 import { relativeTime } from "@/lib/user-agent";
 import { z } from "zod";
+import { getJob } from "@/lib/jobs.functions";
+import { jobToContextFields } from "@/lib/job-context";
+import { getLinkedResumeVersionId, setLinkedResumeVersionId } from "@/lib/job-resume-link";
 
 const searchSchema = z.object({
   jd: z.string().optional(),
@@ -44,8 +51,13 @@ function ResumeStudioPage() {
   const listFn = useServerFn(listResumeProjects);
   const createFn = useServerFn(createResumeProject);
   const delFn = useServerFn(deleteResumeProject);
+  const setDefaultFn = useServerFn(setDefaultResumeProject);
   const listVersionsFn = useServerFn(listResumeVersions);
   const genFn = useServerFn(generateResumeVersion);
+  const duplicateFn = useServerFn(duplicateResumeProjectAsVersion);
+  const duplicateVersionFn = useServerFn(duplicateResumeVersion);
+  const deleteVersionFn = useServerFn(deleteResumeVersion);
+  const getJobFn = useServerFn(getJob);
 
   const projects = useQuery({ queryKey: ["resume-projects"], queryFn: () => listFn() });
   const versions = useQuery({ queryKey: ["resume-versions"], queryFn: () => listVersionsFn({ data: {} }) });
@@ -54,8 +66,54 @@ function ResumeStudioPage() {
   const [genOpen, setGenOpen] = useState(false);
   const [genProjectId, setGenProjectId] = useState<string>("");
   const [prefill, setPrefill] = useState<{ jd: string; title: string; company: string } | null>(null);
+  const jobHydratedRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!search.jobId || !projects.data?.length) return;
+    if (jobHydratedRef.current === search.jobId) return;
+
+    const linked = getLinkedResumeVersionId({
+      jobId: search.jobId,
+      company: search.company,
+      role: search.title,
+    });
+    if (linked) {
+      jobHydratedRef.current = search.jobId;
+      toast.message("Opening your existing resume for this job");
+      nav({ to: "/resume-studio/$id", params: { id: linked } });
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const job = await getJobFn({ data: { id: search.jobId! } });
+        if (cancelled) return;
+        const fields = jobToContextFields(job);
+        jobHydratedRef.current = search.jobId!;
+        setGenProjectId(projects.data!.find((p) => p.is_default)?.id ?? projects.data![0].id);
+        setPrefill({
+          jd: fields.jobContext,
+          title: fields.role || search.title || "",
+          company: fields.company || search.company || "",
+        });
+        setGenOpen(true);
+      } catch (e) {
+        toast.error("Could not load job", { description: (e as Error).message });
+        // Fall back to thin search params if present
+        if (search.title || search.company || search.jd) {
+          setGenProjectId(projects.data!.find((p) => p.is_default)?.id ?? projects.data![0].id);
+          setPrefill({ jd: search.jd ?? "", title: search.title ?? "", company: search.company ?? "" });
+          setGenOpen(true);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.jobId, projects.data]);
+
+  useEffect(() => {
+    if (search.jobId) return; // handled above with full job load
     if ((search.jd || search.title || search.company) && projects.data?.length && !genOpen) {
       setGenProjectId(projects.data.find((p) => p.is_default)?.id ?? projects.data[0].id);
       setPrefill({ jd: search.jd ?? "", title: search.title ?? "", company: search.company ?? "" });
@@ -68,6 +126,12 @@ function ResumeStudioPage() {
     mutationFn: (id: string) => delFn({ data: { id } }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["resume-projects"] }); toast.success("Master resume deleted"); },
     onError: (e) => toast.error("Delete failed", { description: (e as Error).message }),
+  });
+
+  const setDefault = useMutation({
+    mutationFn: (id: string) => setDefaultFn({ data: { id } }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["resume-projects"] }); toast.success("Default master resume updated"); },
+    onError: (e) => toast.error("Could not set default", { description: (e as Error).message }),
   });
 
   const create = useMutation({
@@ -105,6 +169,7 @@ function ResumeStudioPage() {
         data: {
           projectId: payload.projectId,
           jobDescription: payload.jd,
+          jobContext: payload.jd || null,
           jobTitle: payload.jobTitle || null,
           company: payload.company || null,
           customInstructions: payload.instructions || null,
@@ -112,11 +177,45 @@ function ResumeStudioPage() {
       }),
     onSuccess: (v) => {
       qc.invalidateQueries({ queryKey: ["resume-versions"] });
-      toast.success("Tailored resume generated");
+      setLinkedResumeVersionId(
+        {
+          jobId: search.jobId,
+          company: v.company ?? search.company,
+          role: v.job_title ?? search.title,
+        },
+        v.id,
+      );
+      toast.success("Tailored resume generated — compile PDF, then Save to Resumes");
       setGenOpen(false);
       nav({ to: "/resume-studio/$id", params: { id: v.id } });
     },
     onError: (e) => toast.error("AI failed", { description: (e as Error).message }),
+  });
+
+  const duplicate = useMutation({
+    mutationFn: (projectId: string) => duplicateFn({ data: { projectId } }),
+    onSuccess: (v) => {
+      qc.invalidateQueries({ queryKey: ["resume-versions"] });
+      toast.success("Duplicated — edit it below, or use Ask AI");
+      nav({ to: "/resume-studio/$id", params: { id: v.id } });
+    },
+    onError: (e) => toast.error("Duplicate failed", { description: (e as Error).message }),
+  });
+
+  const duplicateVersion = useMutation({
+    mutationFn: (id: string) => duplicateVersionFn({ data: { id } }),
+    onSuccess: (v) => {
+      qc.invalidateQueries({ queryKey: ["resume-versions"] });
+      toast.success("Copied — edit it below, or use Ask AI");
+      nav({ to: "/resume-studio/$id", params: { id: v.id } });
+    },
+    onError: (e) => toast.error("Copy failed", { description: (e as Error).message }),
+  });
+
+  const deleteVersion = useMutation({
+    mutationFn: (id: string) => deleteVersionFn({ data: { id } }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["resume-versions"] }); toast.success("Deleted"); },
+    onError: (e) => toast.error("Delete failed", { description: (e as Error).message }),
   });
 
   return (
@@ -141,9 +240,9 @@ function ResumeStudioPage() {
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Master resumes</h2>
         {projects.isLoading ? (
-          <div className="grid gap-3 md:grid-cols-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
         ) : projects.data?.length ? (
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {projects.data.map((p) => (
               <Card key={p.id}>
                 <CardContent className="py-4 flex items-start justify-between gap-3">
@@ -159,6 +258,26 @@ function ResumeStudioPage() {
                     <Button size="sm" variant="outline" onClick={() => { setGenProjectId(p.id); setGenOpen(true); }}>
                       <Sparkles className="h-3.5 w-3.5 mr-1" /> Tailor
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      title="Duplicate — copy this .tex, then edit it manually or with Ask AI"
+                      disabled={duplicate.isPending}
+                      onClick={() => duplicate.mutate(p.id)}
+                    >
+                      <Copy className="h-3.5 w-3.5 mr-1" /> {duplicate.isPending && duplicate.variables === p.id ? "Duplicating…" : "Duplicate"}
+                    </Button>
+                    {!p.is_default && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Set as default master resume"
+                        disabled={setDefault.isPending}
+                        onClick={() => setDefault.mutate(p.id)}
+                      >
+                        <Star className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     <Button size="sm" variant="ghost" onClick={() => { if (confirm("Delete this master resume and all versions?")) del.mutate(p.id); }}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -186,16 +305,35 @@ function ResumeStudioPage() {
                       <div className="font-medium truncate">{v.job_title || "Untitled role"}{v.company ? ` · ${v.company}` : ""}</div>
                       <div className="text-xs text-muted-foreground">{relativeTime(v.created_at)}</div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 shrink-0">
                       {typeof v.ats_score === "number" && (
-                        <Badge variant={v.ats_score >= 75 ? "default" : v.ats_score >= 50 ? "secondary" : "outline"}>
+                        <Badge variant={v.ats_score >= 75 ? "default" : v.ats_score >= 50 ? "secondary" : "outline"} className="mr-1">
                           ATS {v.ats_score}
                         </Badge>
                       )}
-                      <Button asChild size="sm" variant="ghost">
+                      <Button asChild size="sm" variant="ghost" title="Edit">
                         <Link to="/resume-studio/$id" params={{ id: v.id }}>
-                          Open <ArrowRight className="h-3.5 w-3.5 ml-1" />
+                          <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
                         </Link>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Copy — duplicate this version"
+                        disabled={duplicateVersion.isPending}
+                        onClick={() => duplicateVersion.mutate(v.id)}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Delete"
+                        className="text-destructive hover:text-destructive"
+                        disabled={deleteVersion.isPending}
+                        onClick={() => { if (confirm("Delete this tailored version?")) deleteVersion.mutate(v.id); }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   </li>
@@ -398,8 +536,8 @@ function GenerateDialog({
             </div>
           </div>
           <div>
-            <Label>Job description</Label>
-            <Textarea rows={8} value={jd} onChange={(e) => setJd(e.target.value)} placeholder="Paste the full JD here…" />
+            <Label>Full job posting</Label>
+            <Textarea rows={8} value={jd} onChange={(e) => setJd(e.target.value)} placeholder="Paste the full posting — skills, location, salary, responsibilities, description…" />
           </div>
           <div>
             <Label>Custom instructions (optional)</Label>

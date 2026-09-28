@@ -10,18 +10,35 @@ function sanitize(part: string): string {
 
 export function resumeFileBaseName(opts: {
   fullName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
   email?: string | null;
   company?: string | null;
 }): string {
-  const nameSource =
-    (opts.fullName && opts.fullName.trim()) ||
-    (opts.email ? opts.email.split("@")[0].replace(/[._-]+/g, " ") : "Resume");
-  const parts = nameSource.trim().split(/\s+/);
-  const first = sanitize(parts[0] ?? "Resume") || "Resume";
-  const last = sanitize(parts.slice(1).join(" ")) || "";
+  let first = (opts.firstName ?? "").trim();
+  let last = (opts.lastName ?? "").trim();
+
+  if (!first && !last) {
+    const nameSource =
+      (opts.fullName && opts.fullName.trim()) ||
+      (opts.email ? opts.email.split("@")[0].replace(/[._-]+/g, " ") : "");
+    const parts = nameSource.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      first = parts[0]!;
+      last = parts.slice(1).join(" ");
+    } else if (parts.length === 1) {
+      first = parts[0]!;
+      last = "";
+    }
+  }
+
+  const firstS = sanitize(first);
+  const lastS = sanitize(last);
   const company = sanitize(opts.company ?? "") || "Company";
-  const stem = [first, last, "Resume", company].filter(Boolean).join("_");
-  return stem;
+
+  // firstName_lastName_Resume_companyName
+  const stem = [firstS, lastS, "Resume", company].filter(Boolean).join("_");
+  return stem || `Resume_${company}`;
 }
 
 export function resumePdfName(opts: Parameters<typeof resumeFileBaseName>[0]): string {

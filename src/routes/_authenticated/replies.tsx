@@ -122,7 +122,7 @@ function RepliesPage() {
         ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_1fr]">
         <Card className={selectedId ? "hidden lg:block" : undefined}>
           <CardContent className="py-2 max-h-[70vh] overflow-auto">
             {list.isLoading ? (

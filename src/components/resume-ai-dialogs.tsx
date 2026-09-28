@@ -17,7 +17,7 @@ const PRESETS = [
   "Increase ATS keyword coverage for the target role without inventing anything",
   "Rewrite the summary so it targets this specific role",
   "remove second education keep only btech's details",
-  "flow of the resume skills-->experience-->education-->certifications-->achievements",
+  "flow of the resume skills-->experience-->projects-->education-->certifications-->achievements",
 ];
 
 /** Full-document AI update driven by free-form instructions. */

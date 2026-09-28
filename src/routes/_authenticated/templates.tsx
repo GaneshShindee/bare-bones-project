@@ -116,9 +116,9 @@ function TemplatesPage() {
 
       {tab === "mine" ? (
       isLoading ? (
-        <div className="grid gap-3 md:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}</div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}</div>
       ) : data?.length ? (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {data.map((t) => {
             const vars = extractVariables(`${t.subject}\n${t.body}`);
             return (
@@ -161,9 +161,9 @@ function TemplatesPage() {
             <Input value={gallerySearch} onChange={(e) => setGallerySearch(e.target.value)} placeholder="Search public templates…" className="pl-9" />
           </div>
           {gallery.isLoading ? (
-            <div className="grid gap-3 md:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}</div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}</div>
           ) : gallery.data?.length ? (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {gallery.data.map((g) => (
                 <Card key={g.id}>
                   <CardContent className="py-5 space-y-2">

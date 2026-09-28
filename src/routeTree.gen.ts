@@ -31,6 +31,7 @@ import { Route as AuthenticatedResumeStudioIndexRouteImport } from './routes/_au
 import { Route as AuthenticatedResumeStudioIdRouteImport } from './routes/_authenticated/resume-studio/$id'
 import { Route as ApiLatexCompileRouteImport } from './routes/api/latex/compile'
 import { Route as ApiPublicGmailCallbackRouteImport } from './routes/api/public/gmail/callback'
+import { Route as ApiPublicTelegramWebhookRouteImport } from './routes/api/public/telegram/webhook'
 import { Route as ApiPublicTrackOpenTokenRouteImport } from './routes/api/public/track/open/$token'
 import { Route as ApiPublicTrackPdfTokenRouteImport } from './routes/api/public/track/pdf/$token'
 
@@ -148,6 +149,12 @@ const ApiPublicGmailCallbackRoute = ApiPublicGmailCallbackRouteImport.update({
   path: '/api/public/gmail/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicTelegramWebhookRoute =
+  ApiPublicTelegramWebhookRouteImport.update({
+    id: '/api/public/telegram/webhook',
+    path: '/api/public/telegram/webhook',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicTrackOpenTokenRoute = ApiPublicTrackOpenTokenRouteImport.update({
   id: '/api/public/track/open/$token',
   path: '/api/public/track/open/$token',
@@ -181,6 +188,7 @@ export interface FileRoutesByFullPath {
   '/api/latex/compile': typeof ApiLatexCompileRoute
   '/resume-studio/': typeof AuthenticatedResumeStudioIndexRoute
   '/api/public/gmail/callback': typeof ApiPublicGmailCallbackRoute
+  '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
   '/api/public/track/open/$token': typeof ApiPublicTrackOpenTokenRoute
   '/api/public/track/pdf/$token': typeof ApiPublicTrackPdfTokenRoute
 }
@@ -206,6 +214,7 @@ export interface FileRoutesByTo {
   '/api/latex/compile': typeof ApiLatexCompileRoute
   '/resume-studio': typeof AuthenticatedResumeStudioIndexRoute
   '/api/public/gmail/callback': typeof ApiPublicGmailCallbackRoute
+  '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
   '/api/public/track/open/$token': typeof ApiPublicTrackOpenTokenRoute
   '/api/public/track/pdf/$token': typeof ApiPublicTrackPdfTokenRoute
 }
@@ -233,6 +242,7 @@ export interface FileRoutesById {
   '/api/latex/compile': typeof ApiLatexCompileRoute
   '/_authenticated/resume-studio/': typeof AuthenticatedResumeStudioIndexRoute
   '/api/public/gmail/callback': typeof ApiPublicGmailCallbackRoute
+  '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
   '/api/public/track/open/$token': typeof ApiPublicTrackOpenTokenRoute
   '/api/public/track/pdf/$token': typeof ApiPublicTrackPdfTokenRoute
 }
@@ -260,6 +270,7 @@ export interface FileRouteTypes {
     | '/api/latex/compile'
     | '/resume-studio/'
     | '/api/public/gmail/callback'
+    | '/api/public/telegram/webhook'
     | '/api/public/track/open/$token'
     | '/api/public/track/pdf/$token'
   fileRoutesByTo: FileRoutesByTo
@@ -285,6 +296,7 @@ export interface FileRouteTypes {
     | '/api/latex/compile'
     | '/resume-studio'
     | '/api/public/gmail/callback'
+    | '/api/public/telegram/webhook'
     | '/api/public/track/open/$token'
     | '/api/public/track/pdf/$token'
   id:
@@ -311,6 +323,7 @@ export interface FileRouteTypes {
     | '/api/latex/compile'
     | '/_authenticated/resume-studio/'
     | '/api/public/gmail/callback'
+    | '/api/public/telegram/webhook'
     | '/api/public/track/open/$token'
     | '/api/public/track/pdf/$token'
   fileRoutesById: FileRoutesById
@@ -322,6 +335,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   ApiLatexCompileRoute: typeof ApiLatexCompileRoute
   ApiPublicGmailCallbackRoute: typeof ApiPublicGmailCallbackRoute
+  ApiPublicTelegramWebhookRoute: typeof ApiPublicTelegramWebhookRoute
   ApiPublicTrackOpenTokenRoute: typeof ApiPublicTrackOpenTokenRoute
   ApiPublicTrackPdfTokenRoute: typeof ApiPublicTrackPdfTokenRoute
 }
@@ -482,6 +496,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicGmailCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/telegram/webhook': {
+      id: '/api/public/telegram/webhook'
+      path: '/api/public/telegram/webhook'
+      fullPath: '/api/public/telegram/webhook'
+      preLoaderRoute: typeof ApiPublicTelegramWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/track/open/$token': {
       id: '/api/public/track/open/$token'
       path: '/api/public/track/open/$token'
@@ -547,6 +568,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   ApiLatexCompileRoute: ApiLatexCompileRoute,
   ApiPublicGmailCallbackRoute: ApiPublicGmailCallbackRoute,
+  ApiPublicTelegramWebhookRoute: ApiPublicTelegramWebhookRoute,
   ApiPublicTrackOpenTokenRoute: ApiPublicTrackOpenTokenRoute,
   ApiPublicTrackPdfTokenRoute: ApiPublicTrackPdfTokenRoute,
 }

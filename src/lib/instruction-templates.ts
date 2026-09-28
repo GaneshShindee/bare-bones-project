@@ -1,3 +1,5 @@
+import { toEmailDomain } from "@/lib/linkedin";
+
 export type EmailPattern =
   | "first.last"
   | "firstlast"
@@ -118,14 +120,14 @@ export function previewEmail(
     .replace(/\{last\}/gi, last)
     .replace(/\{f\}/gi, first[0] ?? "")
     .replace(/\{l\}/gi, last[0] ?? "");
-  const domain = (tpl.company_domain || "company.com").trim().replace(/^@+/, "");
+  const domain = toEmailDomain(tpl.company_domain) || "company.com";
   return `${local}@${domain}`;
 }
 
 /** Build the AI prompt internally from a template. */
 export function buildPrompt(tpl: InstructionTemplate): string {
   const pat = patternSample(tpl.email_pattern, tpl.custom_pattern);
-  const domain = (tpl.company_domain || "").trim().replace(/^@+/, "") || "company.com";
+  const domain = toEmailDomain(tpl.company_domain) || "company.com";
   const enabled = RULE_LIBRARY.filter((r) => tpl.rules[r.key] !== false);
   const lines: string[] = [];
   lines.push(`Generate email addresses using this pattern:`);
