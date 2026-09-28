@@ -13,9 +13,11 @@ import type { EditorSelection } from "@/components/latex-editor";
 const PRESETS = [
   "Tailor the whole resume to the target job description",
   "Make every bullet start with a strong action verb and add measurable impact where the facts allow",
-  "Tighten the resume so it fits on a single page",
+  "make certifications and achievements in one main bullet",
   "Increase ATS keyword coverage for the target role without inventing anything",
   "Rewrite the summary so it targets this specific role",
+  "remove second education keep only btech's details",
+  "flow of the resume skills-->experience-->education-->certifications-->achievements",
 ];
 
 /** Full-document AI update driven by free-form instructions. */
@@ -65,16 +67,32 @@ export function UpdateResumeDialog({
               placeholder="e.g. Emphasise backend and cloud work, drop the older internships…"
             />
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {PRESETS.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setInstructions((cur) => (cur.trim() ? `${cur.trim()}\n${p}` : p))}
-                  className="text-[11px] rounded-full border border-border bg-background px-2.5 py-1 hover:bg-accent transition-colors text-left"
-                >
-                  + {p}
-                </button>
-              ))}
+              {PRESETS.map((p) => {
+                const already = instructions
+                  .split(/\n/)
+                  .map((l) => l.trim())
+                  .includes(p);
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    disabled={already}
+                    onClick={() =>
+                      setInstructions((cur) => {
+                        const lines = cur
+                          .split(/\n/)
+                          .map((l) => l.trim())
+                          .filter(Boolean);
+                        if (lines.includes(p)) return cur;
+                        return lines.length ? `${lines.join("\n")}\n${p}` : p;
+                      })
+                    }
+                    className="text-[11px] rounded-full border border-border bg-background px-2.5 py-1 hover:bg-accent transition-colors text-left disabled:opacity-40 disabled:pointer-events-none"
+                  >
+                    + {p}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div>
