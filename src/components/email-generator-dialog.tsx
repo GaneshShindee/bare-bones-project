@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TemplateCombobox } from "@/components/template-combobox";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
@@ -35,8 +36,11 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { Sparkles, Copy, Loader2, Plus, Pencil, Files, Trash2, ChevronDown, Settings2, X } from "lucide-react";
+import { Sparkles, Copy, Loader2, Plus, Pencil, Files, Trash2, ChevronDown, Settings2, X, ExternalLink, Search } from "lucide-react";
 import { toast } from "sonner";
+import { companyKeywordFromDomain, linkedInCompanyKeyword, linkedInCompanySearchUrl } from "@/lib/linkedin";
+import { findEmailsByDomain, listEmailFinderStatus } from "@/lib/email-finder.functions";
+import { EMAIL_FIND_PROVIDERS, EMAIL_VERIFY_PROVIDERS, type FoundEmail } from "@/lib/email-finder";
 
 const LAST_TPL_KEY = "ai-gen:last-template-id";
 
@@ -44,6 +48,8 @@ type Props = {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onUse: (emails: string[]) => void;
+  /** Company from Send page (job meta / {{company}} variable). */
+  companyFromEmail?: string;
 };
 
 function copyText(t: string) {
@@ -53,17 +59,25 @@ function copyText(t: string) {
   );
 }
 
-export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
+export function EmailGeneratorDialog({ open, onOpenChange, onUse, companyFromEmail = "" }: Props) {
   const qc = useQueryClient();
   const listFn = useServerFn(listInstructionTemplates);
   const upsertFn = useServerFn(upsertInstructionTemplate);
   const deleteFn = useServerFn(deleteInstructionTemplate);
   const dupFn = useServerFn(duplicateInstructionTemplate);
   const genFn = useServerFn(generateEmails);
+  const findFn = useServerFn(findEmailsByDomain);
+  const finderStatusFn = useServerFn(listEmailFinderStatus);
 
   const templates = useQuery({
     queryKey: ["instruction-templates"],
     queryFn: () => listFn(),
+    enabled: open,
+  });
+
+  const finderStatus = useQuery({
+    queryKey: ["email-finder-status"],
+    queryFn: () => finderStatusFn(),
     enabled: open,
   });
 
@@ -74,8 +88,14 @@ export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [promptOverride, setPromptOverride] = useState<string | null>(null);
   const [result, setResult] = useState<GenerateResult | null>(null);
+  const [foundSamples, setFoundSamples] = useState<FoundEmail[]>([]);
+  const [finderMeta, setFinderMeta] = useState<{
+    domain: string;
+    pattern: string | null;
+    sampleEmail: string | null;
+    providers: Array<{ provider: string; status: string; message?: string; webUrl: string; count: number }>;
+  } | null>(null);
 
-  // Restore last template / auto-select first
   useEffect(() => {
     if (!open || !templates.data) return;
     if (templates.data.length === 0) {
@@ -96,12 +116,24 @@ export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
     [templates.data, selectedId],
   );
 
-  // Working copy for live domain/rule tweaks without saving
+  // Working copy for live domain/rule tweaks without saving.
+  // Prefer company from the Send email form — do NOT default to the template domain.
   const [working, setWorking] = useState<InstructionTemplate | null>(null);
   useEffect(() => {
-    setWorking(selected ? { ...selected } : null);
+    if (!selected) {
+      setWorking(null);
+      setPromptOverride(null);
+      return;
+    }
+    const fromEmail = companyFromEmail.trim();
+    setWorking({
+      ...selected,
+      company_domain: fromEmail || "",
+    });
     setPromptOverride(null);
-  }, [selected]);
+    setFoundSamples([]);
+    setFinderMeta(null);
+  }, [selected, companyFromEmail, open]);
 
   const generatedPrompt = useMemo(() => (working ? buildPrompt(working) : ""), [working]);
   const effectivePrompt = promptOverride ?? generatedPrompt;
@@ -115,6 +147,68 @@ export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
     mutationFn: () => genFn({ data: { instructions: effectivePrompt, data } }),
     onSuccess: (r) => setResult(r),
     onError: (e) => toast.error("Generation failed", { description: (e as Error).message }),
+  });
+
+  const findEmails = useMutation({
+    mutationFn: () => {
+      const company = working?.company_domain?.trim();
+      if (!company) throw new Error("Enter a company / domain first");
+      return findFn({ data: { companyOrDomain: company } });
+    },
+    onSuccess: (r) => {
+      setFoundSamples(r.emails);
+      setFinderMeta({
+        domain: r.domain,
+        pattern: r.pattern,
+        sampleEmail: r.sampleEmail,
+        providers: r.providers.map((p) => ({
+          provider: p.provider,
+          status: p.status,
+          message: p.message,
+          webUrl: p.webUrl,
+          count: p.emails.length,
+        })),
+      });
+
+      if (working && r.mappedPattern) {
+        setWorking({
+          ...working,
+          company_domain: r.domain,
+          email_pattern: r.mappedPattern as EmailPattern,
+          custom_pattern:
+            r.mappedPattern === "custom" && r.pattern
+              ? r.pattern
+              : working.custom_pattern,
+        });
+      } else if (working && r.domain) {
+        setWorking({ ...working, company_domain: r.domain });
+      }
+
+      // Merge sample emails into generator results
+      if (r.emails.length) {
+        setResult((cur) => {
+          const existing = new Set((cur?.emails ?? []).map((e) => e.toLowerCase()));
+          const added = r.emails.map((e) => e.email).filter((e) => !existing.has(e));
+          return {
+            emails: [...(cur?.emails ?? []), ...added],
+            skipped: cur?.skipped ?? [],
+          };
+        });
+        toast.success(`Added ${r.emails.length} sample email${r.emails.length === 1 ? "" : "s"}`, {
+          description: r.sampleEmail
+            ? `Sample: ${r.sampleEmail}${r.pattern ? ` · pattern ${r.pattern}` : ""}`
+            : r.domain,
+        });
+      } else {
+        const anyConfigured = r.providers.some((p) => p.status === "ok" || p.status === "error");
+        toast.message(anyConfigured ? "No emails found for that domain" : "No API keys configured", {
+          description: anyConfigured
+            ? "Try opening Hunter / Snov in the browser links below."
+            : "Add HUNTER_API_KEY (or Apollo / Prospeo / Snov) to .env, or open web tools.",
+        });
+      }
+    },
+    onError: (e) => toast.error("Email search failed", { description: (e as Error).message }),
   });
 
   const upsert = useMutation({
@@ -184,26 +278,23 @@ export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 min-h-0 grid md:grid-cols-2 gap-0 overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-0 overflow-y-auto md:overflow-hidden">
             {/* Left: template + data */}
-            <div className="flex flex-col gap-4 p-4 border-r min-h-0 overflow-y-auto">
+            <div className="flex flex-col gap-4 p-4 md:border-r min-h-0 md:overflow-y-auto">
               {/* Template selector */}
               <div className="space-y-2">
                 <Label className="text-xs uppercase tracking-wide text-muted-foreground">Instruction Template</Label>
                 <div className="flex gap-2">
-                  <Select
+                  <TemplateCombobox
+                    className="flex-1"
+                    templates={(templates.data ?? []).map((t) => ({ id: t.id, name: t.name }))}
                     value={selectedId ?? ""}
-                    onValueChange={(v) => setSelectedId(v)}
-                  >
-                    <SelectTrigger className="flex-1">
-                      <SelectValue placeholder={templates.data?.length ? "Select template" : "No templates yet"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {templates.data?.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    onValueChange={(v) => setSelectedId(v || null)}
+                    placeholder={templates.data?.length ? "Select template" : "No templates yet"}
+                    searchPlaceholder="Search instruction templates…"
+                    emptyText="No templates found."
+                    disabled={!templates.data?.length}
+                  />
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="icon" title="Template actions">
@@ -257,15 +348,159 @@ export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
                       </Select>
                     </div>
                     <div>
-                      <Label className="text-xs">Company Domain</Label>
+                      <div className="flex items-center justify-between gap-1">
+                        <Label className="text-xs">Company</Label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-1.5 text-[10px]"
+                          disabled={!linkedInCompanyKeyword(working.company_domain)}
+                          onClick={() => {
+                            const kw = linkedInCompanyKeyword(working.company_domain);
+                            if (!kw) {
+                              toast.message("Enter a company name first");
+                              return;
+                            }
+                            window.open(linkedInCompanySearchUrl(kw), "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          <ExternalLink className="h-3 w-3 mr-0.5" /> LinkedIn
+                        </Button>
+                      </div>
                       <Input
                         className="h-8 text-xs"
-                        placeholder="milliman.com"
+                        placeholder="From email form, or type e.g. Nvidia / nvidia.com"
                         value={working.company_domain}
                         onChange={(e) => setWorking({ ...working, company_domain: e.target.value })}
                       />
                     </div>
                   </div>
+
+                  <div className="rounded-md border border-border bg-background/60 p-2.5 space-y-2">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium">Find sample emails from databases</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          Hunter, Snov, GetProspect, Clearout, Skrapp, Findymail & more — API keys in .env when set
+                          {(finderStatus.data?.filter((p) => p.configured).length ?? 0) > 0
+                            ? ` · ${finderStatus.data!.filter((p) => p.configured).length} API ready`
+                            : " · no API keys yet (web links still work)"}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 shrink-0"
+                        disabled={findEmails.isPending || !working.company_domain.trim()}
+                        onClick={() => findEmails.mutate()}
+                      >
+                        {findEmails.isPending ? (
+                          <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Searching…</>
+                        ) : (
+                          <><Search className="h-3.5 w-3.5 mr-1" /> Search databases</>
+                        )}
+                      </Button>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Search</div>
+                      <div className="flex flex-wrap gap-1">
+                        {EMAIL_FIND_PROVIDERS.map((p) => {
+                          const st = finderStatus.data?.find((x) => x.id === p.id);
+                          const run = finderMeta?.providers.find((x) => x.provider === p.id);
+                          const openProvider = () => {
+                            const domainHint = (finderMeta?.domain || working.company_domain.trim() || "allen.in")
+                              .toLowerCase()
+                              .replace(/^https?:\/\//, "")
+                              .split("/")[0]!;
+                            const domain = domainHint.includes(".")
+                              ? domainHint
+                              : `${domainHint.replace(/[^a-z0-9]+/g, "")}.com`;
+                            window.open(run?.webUrl || p.webSearchUrl(domain), "_blank", "noopener,noreferrer");
+                          };
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              title={st?.configured ? `${p.name} API ready` : p.freeNote}
+                              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] ${
+                                st?.configured
+                                  ? "border-primary/40 bg-primary/5 text-foreground"
+                                  : "border-border text-muted-foreground"
+                              }`}
+                              onClick={openProvider}
+                            >
+                              {p.name}
+                              {run && run.count > 0 ? ` · ${run.count}` : ""}
+                              <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground pt-0.5">Verify</div>
+                      <div className="flex flex-wrap gap-1">
+                        {EMAIL_VERIFY_PROVIDERS.map((p) => {
+                          const openProvider = () => {
+                            const domainHint = (finderMeta?.domain || working.company_domain.trim() || "")
+                              .toLowerCase()
+                              .replace(/^https?:\/\//, "")
+                              .split("/")[0]!;
+                            const domain = domainHint.includes(".")
+                              ? domainHint
+                              : domainHint
+                                ? `${domainHint.replace(/[^a-z0-9]+/g, "")}.com`
+                                : "";
+                            window.open(p.webSearchUrl(domain), "_blank", "noopener,noreferrer");
+                          };
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              title={p.freeNote}
+                              className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
+                              onClick={openProvider}
+                            >
+                              {p.name}
+                              <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {finderMeta?.sampleEmail && (
+                      <div className="text-[11px] rounded-md bg-muted/50 px-2 py-1.5 flex flex-wrap items-center gap-2">
+                        <span className="text-muted-foreground">Sample:</span>
+                        <span className="font-mono text-primary">{finderMeta.sampleEmail}</span>
+                        {finderMeta.pattern && (
+                          <Badge variant="secondary" className="text-[10px]">pattern {finderMeta.pattern}</Badge>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-1.5 text-[10px]"
+                          onClick={() => copyText(finderMeta.sampleEmail!)}
+                        >
+                          <Copy className="h-3 w-3 mr-0.5" /> Copy
+                        </Button>
+                      </div>
+                    )}
+
+                    {foundSamples.length > 0 && (
+                      <div className="max-h-24 overflow-auto text-[11px] font-mono space-y-0.5 border-t border-border pt-2">
+                        {foundSamples.slice(0, 12).map((e) => (
+                          <div key={e.email} className="flex items-center justify-between gap-2">
+                            <span className="truncate">{e.email}</span>
+                            <span className="text-muted-foreground shrink-0">{e.provider}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {working.email_pattern === "custom" && (
                     <div>
                       <Label className="text-xs">Custom Pattern</Label>
@@ -293,26 +528,28 @@ export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
                 </div>
               )}
 
-              <div className="flex-1 min-h-[180px] flex flex-col">
-                <Label className="text-xs uppercase tracking-wide text-muted-foreground">Data</Label>
+              <div className="space-y-1.5 shrink-0">
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">Data</Label>
+                  <span className="text-[11px] text-muted-foreground tabular-nums">{totalLines} non-empty lines</span>
+                </div>
                 <Textarea
                   value={data}
                   onChange={(e) => setData(e.target.value)}
                   placeholder="Paste LinkedIn search results, employee list, Excel data, CSV, or any text…"
-                  className="font-mono text-xs mt-1 flex-1 min-h-[180px]"
+                  className="font-mono text-xs min-h-[160px]"
                 />
-                <div className="text-xs text-muted-foreground mt-1">{totalLines} non-empty lines</div>
               </div>
 
               {/* Advanced */}
-              <div className="rounded-lg border">
+              <div className="rounded-lg border shrink-0">
                 <button
                   type="button"
                   onClick={() => setAdvancedOpen((v) => !v)}
-                  className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium"
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium"
                 >
                   <span>Advanced · generated prompt</span>
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
                 </button>
                 {advancedOpen && (
                   <div className="border-t p-3 space-y-2">
@@ -345,8 +582,8 @@ export function EmailGeneratorDialog({ open, onOpenChange, onUse }: Props) {
             </div>
 
             {/* Right: results */}
-            <div className="flex flex-col min-h-0 overflow-hidden">
-              <div className="grid grid-cols-4 gap-2 p-3 border-b text-center text-xs">
+            <div className="flex flex-col min-h-0 md:overflow-hidden border-t md:border-t-0">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 border-b text-center text-xs">
                 <Stat label="Lines" value={totalLines} />
                 <Stat label="Generated" value={emails.length} />
                 <Stat label="Skipped" value={skipped.length} />
@@ -496,8 +733,8 @@ function TemplateEditorDialog({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="col-span-1 sm:col-span-2">
               <Label>Name</Label>
               <Input value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} />
             </div>
@@ -513,11 +750,30 @@ function TemplateEditorDialog({
               </Select>
             </div>
             <div>
-              <Label>Company Domain</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label>Company Domain</Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  disabled={!companyKeywordFromDomain(t.company_domain)}
+                  onClick={() => {
+                    const kw = companyKeywordFromDomain(t.company_domain);
+                    if (!kw) {
+                      toast.message("Enter a company domain first");
+                      return;
+                    }
+                    window.open(linkedInCompanySearchUrl(kw), "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  <ExternalLink className="h-3 w-3 mr-1" /> LinkedIn search
+                </Button>
+              </div>
               <Input placeholder="milliman.com" value={t.company_domain} onChange={(e) => setT({ ...t, company_domain: e.target.value })} />
             </div>
             {t.email_pattern === "custom" && (
-              <div className="col-span-2">
+              <div className="col-span-1 sm:col-span-2">
                 <Label>Custom Pattern</Label>
                 <Input className="font-mono" placeholder="{first}.{last}" value={t.custom_pattern} onChange={(e) => setT({ ...t, custom_pattern: e.target.value })} />
                 <p className="text-xs text-muted-foreground mt-1">Tokens: {"{first}"} {"{last}"} {"{f}"} {"{l}"}</p>
@@ -582,17 +838,18 @@ function TemplateEditorDialog({
             <div className="mt-2 space-y-1.5">
               {t.custom_rules.map((r, i) => (
                 <div key={i} className="flex gap-2 items-center">
-                  <Input value={r} onChange={(e) => {
+                  <Input className="min-w-0 flex-1" value={r} onChange={(e) => {
                     const next = [...t.custom_rules]; next[i] = e.target.value;
                     setT({ ...t, custom_rules: next });
                   }} />
-                  <Button size="icon" variant="ghost" onClick={() => setT({ ...t, custom_rules: t.custom_rules.filter((_, idx) => idx !== i) })}>
+                  <Button size="icon" variant="ghost" className="shrink-0" onClick={() => setT({ ...t, custom_rules: t.custom_rules.filter((_, idx) => idx !== i) })}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               ))}
               <div className="flex gap-2">
                 <Input
+                  className="min-w-0 flex-1"
                   placeholder='e.g. Skip names ending with " Jr"'
                   value={newRule}
                   onChange={(e) => setNewRule(e.target.value)}
@@ -604,7 +861,7 @@ function TemplateEditorDialog({
                     }
                   }}
                 />
-                <Button variant="outline" type="button" onClick={() => { if (newRule.trim()) { setT({ ...t, custom_rules: [...t.custom_rules, newRule.trim()] }); setNewRule(""); } }}>
+                <Button variant="outline" type="button" className="shrink-0" onClick={() => { if (newRule.trim()) { setT({ ...t, custom_rules: [...t.custom_rules, newRule.trim()] }); setNewRule(""); } }}>
                   <Plus className="h-4 w-4 mr-1" /> Add Rule
                 </Button>
               </div>

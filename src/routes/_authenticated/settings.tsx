@@ -17,16 +17,156 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Mail, CheckCircle2, Star, Plus, Pencil, Trash2, Zap, Eye } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Mail, CheckCircle2, Star, Plus, Pencil, Trash2, Zap, Eye, KeyRound, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { getUserPreferences, setUserPreferences } from "@/lib/profile.functions";
+import {
+  getAiKeyStatus,
+  setActiveAiProvider,
+  setGeminiApiKey,
+  clearGeminiApiKey,
+  testGeminiApiKey,
+  setGrokApiKey,
+  clearGrokApiKey,
+  testGrokApiKey,
+} from "@/lib/ai-settings.functions";
+import type { AiProvider } from "@/lib/ai-gateway";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({ meta: [{ title: "Settings — Smart Email Sender" }] }),
   component: SettingsPage,
 });
+
+function providerLabel(p: AiProvider): string {
+  return p === "gemini" ? "Gemini" : p === "grok" ? "Grok" : "Lovable (shared)";
+}
+
+type ProviderKeyStatus = { hasKey: boolean; maskedKey: string | null };
+
+function useApiKeyField(opts: {
+  setFn: (args: { data: { apiKey: string } }) => Promise<{ ok: boolean }>;
+  clearFn: () => Promise<{ ok: boolean }>;
+  testFn: (args: { data: { apiKey: string } }) => Promise<{ ok: boolean; error?: string }>;
+  label: string;
+  onChanged: () => void;
+}) {
+  const [input, setInput] = useState("");
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+
+  const test = useMutation({
+    mutationFn: (apiKey: string) => opts.testFn({ data: { apiKey } }),
+    onSuccess: (r) => {
+      setTestResult(r);
+      if (r.ok) toast.success(`Key works — connected to ${opts.label} successfully.`);
+      else toast.error("Key test failed", { description: r.error });
+    },
+    onError: (e) => toast.error("Couldn't test key", { description: (e as Error).message }),
+  });
+  const save = useMutation({
+    mutationFn: (apiKey: string) => opts.setFn({ data: { apiKey } }),
+    onSuccess: () => {
+      opts.onChanged();
+      setInput("");
+      setTestResult(null);
+      toast.success(`${opts.label} API key saved.`);
+    },
+    onError: (e) => toast.error("Couldn't save key", { description: (e as Error).message }),
+  });
+  const remove = useMutation({
+    mutationFn: () => opts.clearFn(),
+    onSuccess: () => {
+      opts.onChanged();
+      setTestResult(null);
+      toast.success(`${opts.label} API key removed.`);
+    },
+    onError: (e) => toast.error("Couldn't remove key", { description: (e as Error).message }),
+  });
+
+  return { input, setInput, testResult, setTestResult, test, save, remove };
+}
+
+function ProviderKeyPanel({
+  label,
+  placeholder,
+  docsUrl,
+  docsLabel,
+  status,
+  loading,
+  field,
+}: {
+  label: string;
+  placeholder: string;
+  docsUrl: string;
+  docsLabel: string;
+  status: ProviderKeyStatus | undefined;
+  loading: boolean;
+  field: ReturnType<typeof useApiKeyField>;
+}) {
+  if (loading) return <Skeleton className="h-10 w-full" />;
+
+  if (status?.hasKey) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <Badge variant="outline" className="gap-1 shrink-0"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />{label} key saved</Badge>
+          <span className="text-sm text-muted-foreground truncate">{status.maskedKey}</span>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-destructive hover:text-destructive shrink-0"
+          onClick={() => { if (confirm(`Remove your ${label} API key?`)) field.remove.mutate(); }}
+          disabled={field.remove.isPending}
+        >
+          <Trash2 className="h-3.5 w-3.5 mr-1" />Remove
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Input
+          type="password"
+          value={field.input}
+          onChange={(e) => { field.setInput(e.target.value); field.setTestResult(null); }}
+          placeholder={placeholder}
+          className="h-9 min-w-0 flex-1 max-w-sm font-mono"
+          autoComplete="off"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          onClick={() => field.test.mutate(field.input)}
+          disabled={!field.input.trim() || field.test.isPending}
+        >
+          {field.test.isPending ? "Testing…" : "Test"}
+        </Button>
+        <Button
+          size="sm"
+          className="shrink-0"
+          onClick={() => field.save.mutate(field.input)}
+          disabled={!field.input.trim() || field.save.isPending}
+        >
+          {field.save.isPending ? "Saving…" : "Save"}
+        </Button>
+      </div>
+      {field.testResult && !field.testResult.ok && (
+        <p className="text-xs text-destructive">{field.testResult.error}</p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Get a key at{" "}
+        <a href={docsUrl} target="_blank" rel="noreferrer" className="underline">{docsLabel}</a>.
+        Stored on your account and only used for your own AI requests.
+      </p>
+    </div>
+  );
+}
 
 function SettingsPage() {
   const qc = useQueryClient();
@@ -50,6 +190,36 @@ function SettingsPage() {
   const [profile, setProfile] = useState<{ email?: string; name?: string; avatar?: string }>({});
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  const aiKeyStatusFn = useServerFn(getAiKeyStatus);
+  const setActiveProviderFn = useServerFn(setActiveAiProvider);
+  const aiKeyStatus = useQuery({ queryKey: ["ai-key-status"], queryFn: () => aiKeyStatusFn() });
+
+  const setActiveProvider = useMutation({
+    mutationFn: (provider: AiProvider) => setActiveProviderFn({ data: { provider } }),
+    onSuccess: (_r, provider) => {
+      qc.invalidateQueries({ queryKey: ["ai-key-status"] });
+      toast.success(
+        provider === "lovable" ? "Using the shared Lovable gateway" : `Using your ${providerLabel(provider)} key`,
+      );
+    },
+    onError: (e) => toast.error("Couldn't update AI provider", { description: (e as Error).message }),
+  });
+
+  const geminiKey = useApiKeyField({
+    setFn: useServerFn(setGeminiApiKey),
+    clearFn: useServerFn(clearGeminiApiKey),
+    testFn: useServerFn(testGeminiApiKey),
+    label: "Gemini",
+    onChanged: () => qc.invalidateQueries({ queryKey: ["ai-key-status"] }),
+  });
+  const grokKey = useApiKeyField({
+    setFn: useServerFn(setGrokApiKey),
+    clearFn: useServerFn(clearGrokApiKey),
+    testFn: useServerFn(testGrokApiKey),
+    label: "Grok",
+    onChanged: () => qc.invalidateQueries({ queryKey: ["ai-key-status"] }),
+  });
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -95,7 +265,7 @@ function SettingsPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <h1 className="page-title">Settings</h1>
         <p className="text-sm text-muted-foreground">Manage your account and connected Gmail accounts.</p>
       </div>
 
@@ -125,6 +295,60 @@ function SettingsPage() {
             disabled={prefs.isLoading || updatePref.isPending}
             onCheckedChange={(v) => updatePref.mutate(!!v)}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base flex items-center gap-2"><KeyRound className="h-4 w-4" /> AI providers</CardTitle></CardHeader>
+        <CardContent className="space-y-5">
+          <p className="text-sm text-muted-foreground">
+            AI features (drafting, resume tailoring, job parsing, etc.) use the shared Lovable pool by default, which
+            can hit rate limits or run out of credits. Save your own Gemini and/or Grok API key below, then pick which
+            one to use. If you don't pick a provider — or the one you pick has no key saved, or its request fails —
+            AI features automatically fall back to the shared Lovable pool.
+          </p>
+
+          <div className="space-y-1.5">
+            <Label className="text-sm">Active provider</Label>
+            <Select
+              value={aiKeyStatus.data?.activeProvider ?? "lovable"}
+              onValueChange={(v) => setActiveProvider.mutate(v as AiProvider)}
+              disabled={aiKeyStatus.isLoading || setActiveProvider.isPending}
+            >
+              <SelectTrigger className="w-full sm:w-64"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="lovable">Lovable (shared, default)</SelectItem>
+                <SelectItem value="gemini">Gemini{aiKeyStatus.data?.gemini.hasKey ? "" : " (no key saved)"}</SelectItem>
+                <SelectItem value="grok">Grok{aiKeyStatus.data?.grok.hasKey ? "" : " (no key saved)"}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm">Gemini API key</Label>
+            <ProviderKeyPanel
+              label="Gemini"
+              placeholder="AIza..."
+              docsUrl="https://aistudio.google.com/apikey"
+              docsLabel="aistudio.google.com/apikey"
+              status={aiKeyStatus.data?.gemini}
+              loading={aiKeyStatus.isLoading}
+              field={geminiKey}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm">Grok (xAI) API key</Label>
+            <ProviderKeyPanel
+              label="Grok"
+              placeholder="xai-..."
+              docsUrl="https://console.x.ai"
+              docsLabel="console.x.ai"
+              status={aiKeyStatus.data?.grok}
+              loading={aiKeyStatus.isLoading}
+              field={grokKey}
+            />
+          </div>
         </CardContent>
       </Card>
 
@@ -159,16 +383,16 @@ function SettingsPage() {
                   )}
                   <div className="min-w-0 flex-1">
                     {renamingId === acc.id ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Input
                           value={renameValue}
                           onChange={(e) => setRenameValue(e.target.value)}
                           placeholder="Label (e.g. Recruiter)"
-                          className="h-8 max-w-xs"
+                          className="h-8 min-w-0 flex-1 max-w-xs"
                           autoFocus
                         />
-                        <Button size="sm" onClick={() => rename.mutate({ id: acc.id, label: renameValue })}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => setRenamingId(null)}>Cancel</Button>
+                        <Button size="sm" className="shrink-0" onClick={() => rename.mutate({ id: acc.id, label: renameValue })}>Save</Button>
+                        <Button size="sm" variant="ghost" className="shrink-0" onClick={() => setRenamingId(null)}>Cancel</Button>
                       </div>
                     ) : (
                       <>

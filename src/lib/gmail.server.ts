@@ -13,8 +13,8 @@ const GMAIL_SCOPES = [
 export function gmailScopes() { return GMAIL_SCOPES; }
 
 export function requireGmailEnv() {
-  const clientId = process.env.GOOGLE_GMAIL_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_GMAIL_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const clientId = process.env.GOOGLE_GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_GMAIL_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
     throw new Error("Gmail OAuth is not configured. Add GOOGLE_GMAIL_CLIENT_ID and GOOGLE_GMAIL_CLIENT_SECRET secrets.");
   }

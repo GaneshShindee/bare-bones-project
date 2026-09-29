@@ -114,7 +114,7 @@ export const decideFollowup = createServerFn({ method: "POST" })
     z
       .object({
         id: z.string().uuid(),
-        action: z.enum(["approve", "reject"]),
+        action: z.enum(["approve", "reject", "sent"]),
         scheduledAt: z.string().datetime().optional().nullable(),
         templateId: z.string().uuid().nullable().optional(),
         resumeVersionId: z.string().uuid().nullable().optional(),
@@ -124,8 +124,9 @@ export const decideFollowup = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const update: {
-      status?: "approved" | "rejected";
+      status?: "approved" | "rejected" | "sent";
       scheduled_at?: string | null;
+      sent_at?: string | null;
       suggested_template_id?: string | null;
       suggested_resume_version_id?: string | null;
       gmail_connection_id?: string | null;
@@ -133,6 +134,9 @@ export const decideFollowup = createServerFn({ method: "POST" })
     if (data.action === "approve") {
       update.status = "approved";
       update.scheduled_at = data.scheduledAt ?? nextIST3pm().toISOString();
+    } else if (data.action === "sent") {
+      update.status = "sent";
+      update.sent_at = new Date().toISOString();
     } else {
       update.status = "rejected";
     }

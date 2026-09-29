@@ -11,6 +11,8 @@ export type Resume = {
   size_bytes: number;
   is_default: boolean;
   version: number;
+  folder: string | null;
+  source_resume_version_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -20,12 +22,25 @@ export const listResumes = createServerFn({ method: "GET" })
   .handler(async ({ context }): Promise<Resume[]> => {
     const { data, error } = await context.supabase
       .from("resumes")
-      .select("id, name, original_filename, storage_path, mime_type, size_bytes, is_default, version, created_at, updated_at")
+      .select("*")
       .eq("user_id", context.userId)
       .order("is_default", { ascending: false })
       .order("updated_at", { ascending: false });
     if (error) throw new Error(error.message);
-    return (data ?? []) as Resume[];
+    return (data ?? []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      original_filename: r.original_filename,
+      storage_path: r.storage_path,
+      mime_type: r.mime_type,
+      size_bytes: r.size_bytes,
+      is_default: r.is_default,
+      version: r.version,
+      folder: (r as { folder?: string | null }).folder ?? null,
+      source_resume_version_id: (r as { source_resume_version_id?: string | null }).source_resume_version_id ?? null,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    })) as Resume[];
   });
 
 const createSchema = z.object({
@@ -35,6 +50,8 @@ const createSchema = z.object({
   mimeType: z.string().min(1).max(128),
   sizeBytes: z.number().int().positive().max(25 * 1024 * 1024),
   makeDefault: z.boolean().optional(),
+  folder: z.string().trim().max(120).optional().nullable(),
+  sourceResumeVersionId: z.string().uuid().optional().nullable(),
 });
 
 export const createResume = createServerFn({ method: "POST" })
@@ -57,21 +74,24 @@ export const createResume = createServerFn({ method: "POST" })
         .eq("user_id", context.userId)
         .eq("is_default", true);
     }
+    const payload = {
+      user_id: context.userId,
+      name: data.name,
+      original_filename: data.originalFilename,
+      storage_path: data.storagePath,
+      mime_type: data.mimeType,
+      size_bytes: data.sizeBytes,
+      is_default: shouldBeDefault,
+      folder: data.folder?.trim() || null,
+      source_resume_version_id: data.sourceResumeVersionId ?? null,
+    };
     const { data: row, error } = await context.supabase
       .from("resumes")
-      .insert({
-        user_id: context.userId,
-        name: data.name,
-        original_filename: data.originalFilename,
-        storage_path: data.storagePath,
-        mime_type: data.mimeType,
-        size_bytes: data.sizeBytes,
-        is_default: shouldBeDefault,
-      })
+      .insert(payload as never)
       .select()
       .single();
     if (error) throw new Error(error.message);
-    return row as Resume;
+    return row as unknown as Resume;
   });
 
 export const renameResume = createServerFn({ method: "POST" })
