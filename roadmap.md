@@ -1,2 +1,2 @@
 
-- [ ] Fix Gmail OAuth configuration and unauthorized refresh; verify new connection succeeds.
+- [x] Fix Gmail OAuth configuration and unauthorized refresh; verify configuration and clean build.
