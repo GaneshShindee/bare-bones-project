@@ -159,14 +159,7 @@ const sendSchema = z.object({
   gmailAccountId: z.string().uuid().optional().nullable(),
   recipients: z.array(z.string()).min(1).max(2000),
   recipientMeta: z
-    .array(
-      z.object({
-        email: z.string(),
-        name: z.string().max(200).optional(),
-        company: z.string().max(200).optional(),
-        role: z.string().max(200).optional(),
-      }),
-    )
+    .array(z.object({ email: z.string(), name: z.string().max(200).optional(), company: z.string().max(200).optional() }))
     .max(2000)
     .optional(),
   subject: z.string().min(1).max(998),
@@ -197,7 +190,7 @@ export const sendEmail = createServerFn({ method: "POST" })
     if (connErr) throw new Error(connErr.message);
     if (!conn) throw new Error("Gmail is not connected. Connect Gmail in Settings.");
 
-    const { refreshAccessToken, buildRawEmailWithAttachments, gmailSend, formatFromHeader, generateRfcMessageId } = await import("./gmail.server");
+    const { refreshAccessToken, buildRawEmailWithAttachments, gmailSend, formatFromHeader } = await import("./gmail.server");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     // Per-user tracking preference (defaults on).
@@ -225,9 +218,9 @@ export const sendEmail = createServerFn({ method: "POST" })
     const globalVars = data.variables ?? {};
 
     // Validate + dedupe recipients server-side. Skipped ones are recorded, campaign continues.
-    const metaByEmail = new Map<string, { name?: string; company?: string; role?: string }>();
+    const metaByEmail = new Map<string, { name?: string; company?: string }>();
     for (const m of data.recipientMeta ?? []) {
-      metaByEmail.set(m.email.trim().toLowerCase(), { name: m.name, company: m.company, role: m.role });
+      metaByEmail.set(m.email.trim().toLowerCase(), { name: m.name, company: m.company });
     }
     const totalRequested = data.recipients.length;
     const { valid: deduped, skipped: preSkipped } = validateEmails(data.recipients, metaByEmail);
@@ -334,7 +327,6 @@ export const sendEmail = createServerFn({ method: "POST" })
         email,
         name: m.name ?? null,
         company: m.company ?? null,
-        role: m.role ?? null,
         status: "pending" as const,
         tracking_token: trackingEnabled ? crypto.randomUUID() : null,
         pdf_tracking_token: hasPdf ? crypto.randomUUID() : null,
@@ -343,7 +335,7 @@ export const sendEmail = createServerFn({ method: "POST" })
     const { data: inserted, error: rInsErr } = await supabaseAdmin
       .from("email_recipients")
       .insert(recipientRows)
-      .select("id, email, name, company, role, tracking_token, pdf_tracking_token");
+      .select("id, email, name, company, tracking_token, pdf_tracking_token");
     if (rInsErr || !inserted) throw new Error(rInsErr?.message ?? "Failed to prepare recipients");
 
     // Send one message per recipient with a unique pixel — limited concurrency.
@@ -390,7 +382,6 @@ export const sendEmail = createServerFn({ method: "POST" })
         personalBody = `${personalBody}\n\n📎 View attached resume: ${pdfUrl}`;
       }
 
-      const rfcMessageId = generateRfcMessageId(conn.gmail_email);
       try {
         const raw = buildRawEmailWithAttachments({
           from: fromHeader,
@@ -400,18 +391,12 @@ export const sendEmail = createServerFn({ method: "POST" })
           body: personalBody,
           attachments,
           trackingPixelUrl: pixelUrl,
-          thread: { messageId: rfcMessageId },
         });
-        const sentMsg = await gmailSend(accessToken, raw);
+        await gmailSend(accessToken, raw);
         sentCount += 1;
         await supabaseAdmin
           .from("email_recipients")
-          .update({
-            status: "sent",
-            gmail_message_id: sentMsg.id,
-            gmail_thread_id: sentMsg.threadId,
-            rfc_message_id: rfcMessageId,
-          })
+          .update({ status: "sent" })
           .eq("id", row.id);
       } catch (err) {
         failedCount += 1;
@@ -422,7 +407,6 @@ export const sendEmail = createServerFn({ method: "POST" })
           .update({ status: "failed" })
           .eq("id", row.id);
       }
-
     };
 
     // Simple concurrency-limited worker pool.

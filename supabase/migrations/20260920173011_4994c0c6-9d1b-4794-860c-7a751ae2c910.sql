@@ -1,1 +1,0 @@
-ALTER TABLE public.email_history ADD COLUMN IF NOT EXISTS followup_enabled BOOLEAN NOT NULL DEFAULT true;

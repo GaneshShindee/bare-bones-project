@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { aiExtractJobFields, normalizeHttpUrl } from "@/lib/job-ai";
 
 export type Job = {
   id: string;
@@ -29,8 +28,8 @@ export type Job = {
 
 const jobShape = z.object({
   id: z.string().uuid().optional().nullable(),
-  title: z.string().trim().max(200).default(""),
-  company: z.string().trim().max(200).default(""),
+  title: z.string().trim().min(1).max(200),
+  company: z.string().trim().min(1).max(200),
   location: z.string().max(200).default(""),
   work_mode: z.string().max(40).default(""),
   employment_type: z.string().max(40).default(""),
@@ -48,130 +47,42 @@ const jobShape = z.object({
   is_public: z.boolean().default(true),
 });
 
-const jobDateFilter = z.enum(["all", "today", "week", "month"]).default("all");
-
-/** ISO cutoff for a "added today/this week/this month" filter, or null for "all". */
-function dateFilterCutoffIso(filter: z.infer<typeof jobDateFilter>): string | null {
-  if (filter === "all") return null;
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (filter === "today") return startOfToday.toISOString();
-  if (filter === "week") return new Date(startOfToday.getTime() - 6 * 24 * 60 * 60 * 1000).toISOString();
-  return new Date(startOfToday.getFullYear(), startOfToday.getMonth() - 1, startOfToday.getDate()).toISOString();
-}
-
-/** `.or()` clause matching title/company/description/location by free-text search. */
-function jobSearchClause(search: string): string {
-  const s = `%${search}%`;
-  return `title.ilike.${s},company.ilike.${s},description.ilike.${s},location.ilike.${s}`;
-}
-
-const jobListFilters = z.object({
-  search: z.string().max(200).optional(),
-  onlyMine: z.boolean().optional(),
-  bookmarkedOnly: z.boolean().optional(),
-  workMode: z.string().max(40).optional(),
-  dateFilter: jobDateFilter,
-  role: z.string().max(200).optional(),
-  experience: z.string().max(60).optional(),
-});
-
-export type JobsPage = {
-  rows: Array<Job & { bookmarked: boolean; isMine: boolean }>;
-  total: number;
-  page: number;
-  pageSize: number;
-};
-
 export const listJobs = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    jobListFilters
-      .extend({
-        page: z.number().int().min(1).default(1),
-        pageSize: z.number().int().min(1).max(100).default(30),
+    z
+      .object({
+        search: z.string().max(200).optional(),
+        onlyMine: z.boolean().optional(),
+        bookmarkedOnly: z.boolean().optional(),
+        workMode: z.string().max(40).optional(),
       })
       .parse(d ?? {}),
   )
-  .handler(async ({ data, context }): Promise<JobsPage> => {
+  .handler(async ({ data, context }) => {
+    let q = context.supabase
+      .from("jobs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (data.onlyMine) q = q.eq("user_id", context.userId);
+    if (data.workMode) q = q.eq("work_mode", data.workMode);
+    if (data.search) {
+      const s = `%${data.search}%`;
+      q = q.or(`title.ilike.${s},company.ilike.${s},description.ilike.${s},location.ilike.${s}`);
+    }
+    const { data: rows, error } = await q;
+    if (error) throw new Error(error.message);
+
     const { data: bookmarks } = await context.supabase
       .from("job_bookmarks")
       .select("job_id")
       .eq("user_id", context.userId);
     const bset = new Set((bookmarks ?? []).map((b) => b.job_id));
 
-    if (data.bookmarkedOnly && bset.size === 0) {
-      return { rows: [], total: 0, page: data.page, pageSize: data.pageSize };
-    }
-
-    const from = (data.page - 1) * data.pageSize;
-    const to = from + data.pageSize - 1;
-    let q = context.supabase
-      .from("jobs")
-      .select("*", { count: "exact" })
-      .order("created_at", { ascending: false })
-      .range(from, to);
-    if (data.onlyMine) q = q.eq("user_id", context.userId);
-    if (data.workMode) q = q.eq("work_mode", data.workMode);
-    if (data.role) q = q.eq("title", data.role);
-    if (data.experience) q = q.eq("experience", data.experience);
-    if (data.bookmarkedOnly) q = q.in("id", Array.from(bset));
-    if (data.search) q = q.or(jobSearchClause(data.search));
-    const cutoff = dateFilterCutoffIso(data.dateFilter);
-    if (cutoff) q = q.gte("created_at", cutoff);
-
-    const { data: rows, count, error } = await q;
-    if (error) throw new Error(error.message);
-
-    const list = (rows ?? []) as Job[];
-    return {
-      rows: list.map((j) => ({ ...j, bookmarked: bset.has(j.id), isMine: j.user_id === context.userId })),
-      total: count ?? 0,
-      page: data.page,
-      pageSize: data.pageSize,
-    };
-  });
-
-/**
- * Distinct role/experience values for the filter dropdowns — scoped by the same
- * search/mine/bookmarked/date filters as the list (so options stay contextual)
- * but independent of pagination, since a 30-row page would otherwise starve them.
- */
-export const listJobFilterOptions = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => jobListFilters.omit({ role: true, experience: true }).parse(d ?? {}))
-  .handler(async ({ data, context }) => {
-    let bset: Set<string> | null = null;
-    if (data.bookmarkedOnly) {
-      const { data: bookmarks } = await context.supabase
-        .from("job_bookmarks")
-        .select("job_id")
-        .eq("user_id", context.userId);
-      bset = new Set((bookmarks ?? []).map((b) => b.job_id));
-      if (bset.size === 0) return { roles: [], experiences: [] };
-    }
-
-    let q = context.supabase.from("jobs").select("title, experience").limit(2000);
-    if (data.onlyMine) q = q.eq("user_id", context.userId);
-    if (data.workMode) q = q.eq("work_mode", data.workMode);
-    if (bset) q = q.in("id", Array.from(bset));
-    if (data.search) q = q.or(jobSearchClause(data.search));
-    const cutoff = dateFilterCutoffIso(data.dateFilter);
-    if (cutoff) q = q.gte("created_at", cutoff);
-
-    const { data: rows, error } = await q;
-    if (error) throw new Error(error.message);
-
-    const roles = new Set<string>();
-    const experiences = new Set<string>();
-    for (const r of rows ?? []) {
-      if (r.title?.trim()) roles.add(r.title.trim());
-      if (r.experience?.trim()) experiences.add(r.experience.trim());
-    }
-    return {
-      roles: Array.from(roles).sort((a, b) => a.localeCompare(b)),
-      experiences: Array.from(experiences).sort((a, b) => a.localeCompare(b)),
-    };
+    let list = (rows ?? []) as Job[];
+    if (data.bookmarkedOnly) list = list.filter((j) => bset.has(j.id));
+    return list.map((j) => ({ ...j, bookmarked: bset.has(j.id), isMine: j.user_id === context.userId }));
   });
 
 export const getJob = createServerFn({ method: "GET" })
@@ -247,33 +158,55 @@ export const toggleJobBookmark = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-export type { ParsedJobFields } from "@/lib/job-ai";
-export { aiExtractJobFields } from "@/lib/job-ai";
-
 /** AI Job Parser — extract structured fields from raw text/URL content. */
 export const parseJobText = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
-    z.object({ text: z.string().max(50_000) }).parse(d),
+    z.object({ text: z.string().min(20).max(50_000) }).parse(d),
   )
-  .handler(async ({ data, context }) =>
-    aiExtractJobFields(data.text, { supabase: context.supabase, userId: context.userId }),
-  );
-
-/** Fetch a careers / LinkedIn / ATS page and extract job fields for review. */
-export const parseJobFromUrl = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z.object({ url: z.string().min(4).max(2_000) }).parse(d),
-  )
-  .handler(async ({ data, context }) => {
-    const { fetchUrlAsJobText } = await import("./job-import");
-    const url = normalizeHttpUrl(data.url);
-    const { text, finalUrl } = await fetchUrlAsJobText(url);
-    const fields = await aiExtractJobFields(text, { supabase: context.supabase, userId: context.userId });
+  .handler(async ({ data }) => {
+    const key = process.env.LOVABLE_API_KEY;
+    if (!key) throw new Error("AI gateway not configured");
+    const sys =
+      "You extract job information from arbitrary text (LinkedIn, Greenhouse, Lever, careers pages, emails, PDFs). Return STRICT JSON with keys: title, company, location, work_mode (remote|hybrid|onsite|''), employment_type (full-time|intern|contract|part-time|''), experience, salary, description, responsibilities (string[]), skills (string[]), technologies (string[]), tags (string[]), recruiter_email, apply_url, company_website. If a field is unknown, use an empty string or empty array. Do not invent facts. No markdown, no prose.";
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: data.text },
+        ],
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (res.status === 429) throw new Error("AI rate limit reached. Try again shortly.");
+    if (res.status === 402) throw new Error("AI credits exhausted.");
+    if (!res.ok) throw new Error(`AI error ${res.status}`);
+    const j = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const content = j.choices?.[0]?.message?.content ?? "";
+    const m = content.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("AI returned invalid JSON");
+    const parsed = JSON.parse(m[0]) as Record<string, unknown>;
+    const asStr = (k: string) => (typeof parsed[k] === "string" ? (parsed[k] as string) : "");
+    const asArr = (k: string) =>
+      Array.isArray(parsed[k]) ? ((parsed[k] as unknown[]).filter((x) => typeof x === "string") as string[]) : [];
     return {
-      ...fields,
-      source_url: finalUrl,
-      apply_url: fields.apply_url || finalUrl,
+      title: asStr("title"),
+      company: asStr("company"),
+      location: asStr("location"),
+      work_mode: asStr("work_mode"),
+      employment_type: asStr("employment_type"),
+      experience: asStr("experience"),
+      salary: asStr("salary"),
+      description: asStr("description"),
+      responsibilities: asArr("responsibilities"),
+      skills: asArr("skills"),
+      technologies: asArr("technologies"),
+      tags: asArr("tags"),
+      recruiter_email: asStr("recruiter_email"),
+      apply_url: asStr("apply_url"),
+      company_website: asStr("company_website"),
     };
   });

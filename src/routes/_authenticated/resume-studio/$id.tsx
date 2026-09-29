@@ -5,81 +5,43 @@ import {
   getResumeVersion,
   updateResumeVersionTex,
   uploadResumeVersionPdf,
-  saveResumeVersionToLibrary,
-  saveResumeVersionAsMaster,
   deleteResumeVersion,
   improveResumeSection,
   generateApplicationEmail,
 } from "@/lib/resume-studio.functions";
-import { getUserPreferences } from "@/lib/profile.functions";
-import { resumeFileBaseName } from "@/lib/naming";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { LatexEditor, type EditorSelection, type LatexEditorApi } from "@/components/latex-editor";
+import { LatexEditor } from "@/components/latex-editor";
 import { LatexPreview } from "@/components/latex-preview";
-import { UpdateResumeDialog, InlineAskAi } from "@/components/resume-ai-dialogs";
-import { ArrowLeft, Save, Wand2, Sparkles, Trash2, Send, CheckCircle2, AlertCircle, FolderPlus, Paperclip, Copy } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, Save, Wand2, Sparkles, Trash2, Send, CheckCircle2, AlertCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AI_JD_RESUME_FOLDER } from "@/lib/linkedin";
-import { peekSendResumeHandoff, saveSendResumeHandoff } from "@/lib/send-resume-handoff";
-import { setLinkedResumeVersionId } from "@/lib/job-resume-link";
-import { z } from "zod";
-
-const studioSearchSchema = z
-  .object({
-    /** Came from Send Email — attach PDF only, never AI-draft a new body. */
-    returnToSend: z.union([z.boolean(), z.literal("true"), z.literal("1"), z.literal(1)]).optional(),
-  })
-  .partial();
-
-function isReturnToSend(v: unknown): boolean {
-  return v === true || v === "true" || v === "1" || v === 1;
-}
 
 export const Route = createFileRoute("/_authenticated/resume-studio/$id")({
   head: () => ({ meta: [{ title: "Resume workspace — Smart Email Sender" }] }),
-  validateSearch: (s: Record<string, unknown>) => studioSearchSchema.parse(s),
   component: WorkspacePage,
 });
 
 function WorkspacePage() {
   const { id } = Route.useParams();
-  const search = Route.useSearch();
   const qc = useQueryClient();
   const nav = useNavigate();
 
   const getFn = useServerFn(getResumeVersion);
   const saveFn = useServerFn(updateResumeVersionTex);
   const uploadPdfFn = useServerFn(uploadResumeVersionPdf);
-  const saveLibraryFn = useServerFn(saveResumeVersionToLibrary);
-  const saveAsMasterFn = useServerFn(saveResumeVersionAsMaster);
   const delFn = useServerFn(deleteResumeVersion);
   const improveFn = useServerFn(improveResumeSection);
   const emailFn = useServerFn(generateApplicationEmail);
-  const prefsFn = useServerFn(getUserPreferences);
 
   const q = useQuery({ queryKey: ["resume-version", id], queryFn: () => getFn({ data: { id } }) });
-  const prefs = useQuery({ queryKey: ["user-prefs"], queryFn: () => prefsFn() });
   const [tex, setTex] = useState("");
   const [dirty, setDirty] = useState(false);
   const [errorLines, setErrorLines] = useState<number[]>([]);
   const [compiledTex, setCompiledTex] = useState<string | null>(null);
   const [hasPdf, setHasPdf] = useState(false);
-  const [updateOpen, setUpdateOpen] = useState(false);
-  const [selection, setSelection] = useState<EditorSelection | null>(null);
-  const editorApi = useRef<LatexEditorApi | null>(null);
-  const [attachOnlyHandoff, setAttachOnlyHandoff] = useState(
-    () => peekSendResumeHandoff()?.attachOnly === true || isReturnToSend(search.returnToSend),
-  );
-
-  useEffect(() => {
-    setAttachOnlyHandoff(
-      peekSendResumeHandoff()?.attachOnly === true || isReturnToSend(search.returnToSend),
-    );
-  }, [id, search.returnToSend]);
 
   useEffect(() => {
     if (q.data && !dirty) setTex(q.data.version.tex_content);
@@ -97,40 +59,12 @@ function WorkspacePage() {
     if (!dirty || save.isPending) return;
     const t = setTimeout(() => save.mutate(), 1500);
     return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tex, dirty]);
 
   const uploadPdf = useMutation({
     mutationFn: (b64: string) => uploadPdfFn({ data: { id, pdfBase64: b64 } }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["resume-version", id] });
-      qc.invalidateQueries({ queryKey: ["resumes"] });
-    },
-  });
-
-  const saveToLibrary = useMutation({
-    mutationFn: () => saveLibraryFn({ data: { id } }),
-    onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["resumes"] });
-      toast.success(r.updated ? "Updated in Resumes" : "Saved to Resumes", {
-        description: `Folder: ${r.folder}`,
-        action: {
-          label: "Open Resumes",
-          onClick: () => nav({ to: "/resumes" }),
-        },
-      });
-    },
-    onError: (e) => toast.error("Could not save to Resumes", { description: (e as Error).message }),
-  });
-
-  const saveAsMaster = useMutation({
-    mutationFn: () => saveAsMasterFn({ data: { id } }),
-    onSuccess: (proj) => {
-      qc.invalidateQueries({ queryKey: ["resume-projects"] });
-      toast.success(`Saved as Master resume "${proj.name}"`, {
-        action: { label: "Open Resume Studio", onClick: () => nav({ to: "/resume-studio" }) },
-      });
-    },
-    onError: (e) => toast.error("Could not save as Master", { description: (e as Error).message }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["resume-version", id] }),
   });
 
   const del = useMutation({
@@ -161,60 +95,7 @@ function WorkspacePage() {
   });
 
   const pdfStale = compiledTex !== tex;
-
-  /** Return to Send with existing email + this PDF — no new AI email. */
-  const attachToExistingEmail = () => {
-    if (!hasPdf) {
-      toast.error("Compile the resume first", { description: "Click Compile in the preview to generate the PDF." });
-      return;
-    }
-    if (pdfStale) {
-      toast.error("Source changed since last compile", { description: "Re-compile so the newest PDF is attached." });
-      return;
-    }
-    const existing = peekSendResumeHandoff();
-    if (existing?.attachOnly) {
-      saveSendResumeHandoff({ ...existing, resumeVersionId: id });
-    } else {
-      saveSendResumeHandoff({
-        attachOnly: true,
-        subject: "",
-        body: "",
-        company: q.data?.version.company ?? "",
-        role: q.data?.version.job_title ?? "",
-        resumeVersionId: id,
-      });
-    }
-    // Keep this version linked to the company/role for future "Generate Resume" clicks.
-    setLinkedResumeVersionId(
-      {
-        jobId: existing?.jobId,
-        company: existing?.company || q.data?.version.company,
-        role: existing?.role || q.data?.version.job_title,
-      },
-      id,
-    );
-    nav({
-      to: "/send",
-      search: {
-        resumeVersionId: id,
-        company: q.data?.version.company ?? "",
-        name: q.data?.version.job_title ?? "",
-        ...(existing?.jobId ? { jobId: existing.jobId } : {}),
-      },
-    });
-    toast.success("Attaching resume to your email", {
-      description: "Subject & body are unchanged.",
-    });
-  };
-
   const onSendClick = () => {
-    // Re-check at click time — handoff / returnToSend must never AI-draft a new email.
-    const handoff = peekSendResumeHandoff();
-    if (handoff?.attachOnly || isReturnToSend(search.returnToSend) || attachOnlyHandoff) {
-      attachToExistingEmail();
-      return;
-    }
     if (!hasPdf) {
       toast.error("Compile the resume first", { description: "Click Compile in the preview to generate resume.pdf." });
       return;
@@ -230,7 +111,7 @@ function WorkspacePage() {
     return (
       <div className="mx-auto max-w-7xl space-y-4">
         <Skeleton className="h-8 w-64" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1fr]">
+        <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
           <Skeleton className="h-[600px]" />
           <Skeleton className="h-[600px]" />
         </div>
@@ -249,7 +130,7 @@ function WorkspacePage() {
             <Link to="/resume-studio"><ArrowLeft className="h-4 w-4 mr-1" /> All resumes</Link>
           </Button>
           <div className="min-w-0">
-            <h1 className="page-title truncate">{v.job_title || "Untitled role"}{v.company ? ` · ${v.company}` : ""}</h1>
+            <h1 className="text-xl font-semibold tracking-tight truncate">{v.job_title || "Untitled role"}{v.company ? ` · ${v.company}` : ""}</h1>
             <div className="text-xs text-muted-foreground">Version updated {new Date(v.updated_at).toLocaleString()}</div>
           </div>
         </div>
@@ -264,49 +145,12 @@ function WorkspacePage() {
           </Button>
           <Button
             size="sm"
-            variant="secondary"
-            onClick={() => saveToLibrary.mutate()}
-            disabled={!hasPdf || pdfStale || saveToLibrary.isPending}
-            title={
-              !hasPdf
-                ? "Compile the PDF first"
-                : pdfStale
-                  ? "Re-compile so the newest PDF is saved"
-                  : `Save PDF to Resumes → ${AI_JD_RESUME_FOLDER}`
-            }
-          >
-            <FolderPlus className="h-3.5 w-3.5 mr-1" />
-            {saveToLibrary.isPending ? "Saving…" : "Save to Resumes"}
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => saveAsMaster.mutate()}
-            disabled={saveAsMaster.isPending}
-            title="Save this .tex as a new Master resume, so you can Tailor/Duplicate from it later"
-          >
-            <Copy className="h-3.5 w-3.5 mr-1" />
-            {saveAsMaster.isPending ? "Saving…" : "Save as Master"}
-          </Button>
-          <Button
-            size="sm"
             onClick={onSendClick}
             disabled={draftEmail.isPending}
-            title={
-              !hasPdf
-                ? "Compile first to generate resume.pdf"
-                : pdfStale
-                  ? "Source changed — re-compile before sending"
-                  : attachOnlyHandoff
-                    ? "Attach this PDF to your existing email (no new body)"
-                    : "Attach the latest PDF and open the email composer"
-            }
+            title={!hasPdf ? "Compile first to generate resume.pdf" : pdfStale ? "Source changed — re-compile before sending" : "Attach the latest PDF and open the email composer"}
           >
-            {attachOnlyHandoff ? (
-              <><Paperclip className="h-3.5 w-3.5 mr-1" /> {!hasPdf ? "Compile to attach" : pdfStale ? "Re-compile to attach" : "Attach to email"}</>
-            ) : (
-              <><Send className="h-3.5 w-3.5 mr-1" /> {draftEmail.isPending ? "Drafting…" : !hasPdf ? "Compile to send" : pdfStale ? "Re-compile to send" : "Send with email"}</>
-            )}
+            <Send className="h-3.5 w-3.5 mr-1" />
+            {draftEmail.isPending ? "Drafting…" : !hasPdf ? "Compile to send" : pdfStale ? "Re-compile to send" : "Send with email"}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => { if (confirm("Delete this version?")) del.mutate(); }}>
             <Trash2 className="h-3.5 w-3.5" />
@@ -315,65 +159,36 @@ function WorkspacePage() {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => setUpdateOpen(true)}>
-          <Wand2 className="h-3.5 w-3.5 mr-1" /> Update Resume with AI
-        </Button>
         {(["summary", "experience", "projects", "skills", "ats"] as const).map((s) => (
           <Button key={s} size="sm" variant="outline" onClick={() => improve.mutate(s)} disabled={improve.isPending}>
             <Wand2 className="h-3.5 w-3.5 mr-1" /> Improve {s === "ats" ? "ATS coverage" : s}
           </Button>
         ))}
-        <span className="text-xs text-muted-foreground self-center">
-          Tip: select any LaTeX in the editor to get an inline “Ask AI” rewrite.
-        </span>
       </div>
 
       <InsightsBar version={v} />
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 flex-1 min-h-0">
+      <div className="grid gap-3 lg:grid-cols-2 flex-1 min-h-0">
         <Card className="overflow-hidden flex flex-col min-h-0">
           <div className="border-b border-border px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
             <span>LaTeX source · {q.data.project?.main_tex_filename ?? "resume.tex"}</span>
             {dirty && <span className="text-amber-600 dark:text-amber-400">● Unsaved</span>}
           </div>
-          <div className="flex-1 min-h-0 relative">
-            <LatexEditor
-              value={tex}
-              onChange={(v) => { setTex(v); setDirty(true); }}
-              errorLines={errorLines}
-              onSelectionChange={setSelection}
-              onReady={(api) => { editorApi.current = api; }}
-            />
-            <InlineAskAi
-              selection={selection}
-              versionId={id}
-              document={tex}
-              onReplace={(start, end, text) => {
-                editorApi.current?.replaceRange(start, end, text);
-                setDirty(true);
-                setSelection(null);
-              }}
-            />
+          <div className="flex-1 min-h-0">
+            <LatexEditor value={tex} onChange={(v) => { setTex(v); setDirty(true); }} errorLines={errorLines} />
           </div>
         </Card>
         <Card className="overflow-hidden flex flex-col min-h-0">
           <LatexPreview
             tex={tex}
             filename={q.data.project?.main_tex_filename ?? "resume.tex"}
-            downloadName={resumeFileBaseName({ fullName: prefs.data?.fullName ?? null, email: prefs.data?.email ?? null, company: v.company ?? null })}
+            downloadName={`${(v.company || "resume").replace(/[^A-Za-z0-9]+/g, "_")}_${(v.job_title || "role").replace(/[^A-Za-z0-9]+/g, "_")}`}
             autoCompile
             onCompiled={(b64) => { setCompiledTex(tex); setHasPdf(true); uploadPdf.mutate(b64); }}
             onErrors={(errs) => setErrorLines(errs.map((e) => e.line ?? 0).filter((n) => n > 0))}
           />
         </Card>
       </div>
-
-      <UpdateResumeDialog
-        open={updateOpen}
-        onOpenChange={setUpdateOpen}
-        versionId={id}
-        onApplied={(newTex) => { setTex(newTex); setDirty(false); qc.invalidateQueries({ queryKey: ["resume-version", id] }); }}
-      />
     </div>
   );
 }

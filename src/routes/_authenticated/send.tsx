@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listTemplates } from "@/lib/templates.functions";
@@ -12,27 +12,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TemplateCombobox } from "@/components/template-combobox";
-import { ResumeCombobox } from "@/components/resume-combobox";
 import { Badge } from "@/components/ui/badge";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { extractVariables, applyTemplate } from "@/lib/templating";
 import { parseRecipients } from "@/lib/recipients";
 import { toast } from "sonner";
-import { Send, Sparkles, Paperclip, X, FileText, Upload, Flame, Pencil, Eye, Wand2 } from "lucide-react";
+import { Send, Sparkles, Paperclip, X, FileText, Upload, Flame } from "lucide-react";
 import { EmailGeneratorDialog } from "@/components/email-generator-dialog";
-import { AiBodyDialog } from "@/components/ai-body-dialog";
-import { GenerateResumeDialog, openLinkedOrGenerateResume } from "@/components/generate-resume-dialog";
-import { getLinkedResumeVersionId } from "@/lib/job-resume-link";
-import { DraftManager, filesFromDraftAttachments, type DraftState, type LoadedDraft } from "@/components/draft-manager";
-import { getAutosaveDraft, saveEmailDraft, deleteEmailDraft } from "@/lib/drafts.functions";
 import { z } from "zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { getResumeVersion } from "@/lib/resume-studio.functions";
-import { getJob } from "@/lib/jobs.functions";
-import { jobToContextFields, jobToTemplateVars } from "@/lib/job-context";
-import { generateAiEmail } from "@/lib/ai-email.functions";
-import { peekSendResumeHandoff, clearSendResumeHandoff } from "@/lib/send-resume-handoff";
 
 const searchSchema = z
   .object({
@@ -44,7 +33,6 @@ const searchSchema = z
     name: z.string().optional(),
     company: z.string().optional(),
     resumeVersionId: z.string().optional(),
-    jobId: z.string().uuid().optional(),
   })
   .partial();
 
@@ -56,7 +44,6 @@ export const Route = createFileRoute("/_authenticated/send")({
 
 function SendPage() {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const search = Route.useSearch();
   const listFn = useServerFn(listTemplates);
   const sendFn = useServerFn(sendEmail);
@@ -76,45 +63,17 @@ function SendPage() {
   const [body, setBody] = useState("");
   const [vars, setVars] = useState<Record<string, string>>({});
   const [genOpen, setGenOpen] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
-  const [resumeGenOpen, setResumeGenOpen] = useState(false);
-  const [draftId, setDraftId] = useState<string | null>(null);
-  const [autosaveId, setAutosaveId] = useState<string | null>(null);
-  const [tplPickerOpen, setTplPickerOpen] = useState(false);
-  const [resumePickerOpen, setResumePickerOpen] = useState(false);
-  const [jobMeta, setJobMeta] = useState({
-    company: "",
-    role: "",
-    jobDescription: "",
-    jobContext: "",
-    instructions: "",
-  });
   const [resumeIds, setResumeIds] = useState<string[]>([]);
   const [uploads, setUploads] = useState<File[]>([]);
-  const [savedAttachments, setSavedAttachments] = useState<
-    Array<{ filename: string; mimeType: string; size: number; storagePath: string }>
-  >([]);
   const uploadRef = useRef<HTMLInputElement | null>(null);
   const initedRef = useRef(false);
-  const jobHydratedRef = useRef<string | null>(null);
-  const skipAutosaveUntilRef = useRef(0);
-  const autosaveIdRef = useRef<string | null>(null);
-  const getJobFn = useServerFn(getJob);
   const [report, setReport] = useState<null | {
     total: number; sent: number; failed: number;
     skipped: Array<{ email: string; reason: string; note?: string }>;
     recipientCount: number;
   }>(null);
-  const [editingPreview, setEditingPreview] = useState(false);
-  const [aiFilling, setAiFilling] = useState(false);
-
-  const autosaveFn = useServerFn(saveEmailDraft);
-  const getAutosaveFn = useServerFn(getAutosaveDraft);
-  const deleteDraftFn = useServerFn(deleteEmailDraft);
-  const generateAiEmailFn = useServerFn(generateAiEmail);
 
   const isFollowUp = search.followUp === "1";
-  const hasUrlPrefill = !!(search.to || search.followUp || search.resumeVersionId || search.campaignId || search.jobId);
 
   const selectedSender = useMemo(
     () => accounts.data?.find((a) => a.id === senderId) ?? null,
@@ -136,270 +95,39 @@ function SendPage() {
     if (preferred) setResumeIds((cur) => (cur.includes(preferred) ? cur : [...cur, preferred]));
   };
 
-  // One-time hydration: URL prefill, cross-device autosave, or defaults.
+  // One-time hydration: default sender, default/follow-up template, URL prefill.
   useEffect(() => {
     if (initedRef.current) return;
     if (!accounts.data || !templates.data || !prefs.data) return;
+    initedRef.current = true;
 
     const urlSender = search.sender ? accounts.data.find((a) => a.id === search.sender) : null;
     const defAcc = accounts.data.find((a) => a.is_default) ?? accounts.data[0];
     setSenderId((urlSender ?? defAcc)?.id ?? "");
 
-    const applyDefaultTemplate = () => {
-      let templateToUse: string | null = null;
-      if (search.template && templates.data.some((t) => t.id === search.template)) {
-        templateToUse = search.template;
-      } else if (isFollowUp && prefs.data.followUpTemplateId && templates.data.some((t) => t.id === prefs.data.followUpTemplateId)) {
-        templateToUse = prefs.data.followUpTemplateId;
-      } else if (!isFollowUp && prefs.data.defaultTemplateId && templates.data.some((t) => t.id === prefs.data.defaultTemplateId)) {
-        templateToUse = prefs.data.defaultTemplateId;
-      } else {
-        const marked = templates.data.find((t) => (t as { is_default?: boolean }).is_default);
-        if (marked) templateToUse = marked.id;
-      }
-      if (templateToUse) selectTemplate(templateToUse);
-    };
+    let templateToUse: string | null = null;
+    if (search.template && templates.data.some((t) => t.id === search.template)) {
+      templateToUse = search.template;
+    } else if (isFollowUp && prefs.data.followUpTemplateId && templates.data.some((t) => t.id === prefs.data.followUpTemplateId)) {
+      templateToUse = prefs.data.followUpTemplateId;
+    } else if (!isFollowUp && prefs.data.defaultTemplateId && templates.data.some((t) => t.id === prefs.data.defaultTemplateId)) {
+      templateToUse = prefs.data.defaultTemplateId;
+    } else {
+      const marked = templates.data.find((t) => (t as { is_default?: boolean }).is_default);
+      if (marked) templateToUse = marked.id;
+    }
+    if (templateToUse) selectTemplate(templateToUse);
 
     if (search.to) setRecipientText(search.to);
     const preVars: Record<string, string> = {};
     if (search.name) preVars.name = search.name;
     if (search.company) preVars.company = search.company;
     if (Object.keys(preVars).length) setVars((v) => ({ ...preVars, ...v }));
-    if (search.company) {
-      setJobMeta((m) => ({ ...m, company: search.company || m.company }));
-    }
-
-    if (hasUrlPrefill) {
-      // When returning from Resume Studio with a preserved email, don't wipe it with a template.
-      const handoff = peekSendResumeHandoff();
-      if (!(search.resumeVersionId && handoff?.attachOnly && (handoff.subject || handoff.body))) {
-        applyDefaultTemplate();
-      }
-      initedRef.current = true;
-      skipAutosaveUntilRef.current = Date.now() + 2000;
-      // Reuse the user's single existing autosave row (if any) so composing from a job
-      // posting overwrites that in-progress draft instead of leaving an orphaned extra one behind.
-      getAutosaveFn()
-        .then((r) => {
-          if (r.draft && !autosaveIdRef.current) {
-            setAutosaveId(r.draft.id);
-            autosaveIdRef.current = r.draft.id;
-          }
-        })
-        .catch(() => {});
-      return;
-    }
-
-    initedRef.current = true; // block re-entry while fetching
-    (async () => {
-      try {
-        const r = await getAutosaveFn();
-        const d = r.draft;
-        const hasContent = !!(d && (d.recipients?.trim() || d.subject?.trim() || d.body?.trim()));
-        if (!hasContent || !d) {
-          applyDefaultTemplate();
-          if (d) {
-            setAutosaveId(d.id);
-            autosaveIdRef.current = d.id;
-          }
-        } else {
-          const files = await filesFromDraftAttachments(r.attachments);
-          setTplId(d.template_id ?? "");
-          if (d.gmail_account_id) setSenderId(d.gmail_account_id);
-          setRecipientText(d.recipients ?? "");
-          setSubject(d.subject ?? "");
-          setBody(d.body ?? "");
-          setVars(d.variables ?? {});
-          setResumeIds(d.resume_ids ?? []);
-          setUploads(files);
-          setSavedAttachments(d.attachments ?? []);
-          setJobMeta({
-            company: d.company ?? "",
-            role: d.role ?? "",
-            jobDescription: d.job_description ?? "",
-            jobContext: d.job_description ?? "",
-            instructions: d.instructions ?? "",
-          });
-          setAutosaveId(d.id);
-          autosaveIdRef.current = d.id;
-          toast.message("Restored autosaved draft", {
-            description: `Last saved ${new Date(d.updated_at).toLocaleString()}`,
-          });
-        }
-      } catch {
-        applyDefaultTemplate();
-      } finally {
-        skipAutosaveUntilRef.current = Date.now() + 2000;
-      }
-    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts.data, templates.data, prefs.data]);
 
-  // Load full Jobs Community posting when navigated with ?jobId=, then auto-fill subject/body via AI.
-  useEffect(() => {
-    if (!search.jobId || jobHydratedRef.current === search.jobId) return;
-    // Wait until template hydration can resolve (same deps as one-time init).
-    if (!accounts.data || !templates.data || !prefs.data) return;
-
-    let cancelled = false;
-    (async () => {
-      try {
-        const job = await getJobFn({ data: { id: search.jobId! } });
-        if (cancelled) return;
-        const fields = jobToContextFields(job);
-        jobHydratedRef.current = search.jobId!;
-        setJobMeta((m) => ({
-          ...m,
-          company: fields.company || m.company,
-          role: fields.role || m.role,
-          jobDescription: fields.jobDescription || m.jobDescription,
-          jobContext: fields.jobContext || m.jobContext,
-        }));
-        setVars((v) => ({
-          ...v,
-          ...jobToTemplateVars(job),
-        }));
-        if (job.recruiter_email) {
-          setRecipientText((cur) => (cur.trim() ? cur : job.recruiter_email));
-        }
-
-        // Resolve template the same way as page init (tplId state may still be stale this tick).
-        let templateId: string | null = null;
-        if (search.template && templates.data.some((t) => t.id === search.template)) {
-          templateId = search.template;
-        } else if (prefs.data.defaultTemplateId && templates.data.some((t) => t.id === prefs.data.defaultTemplateId)) {
-          templateId = prefs.data.defaultTemplateId;
-        } else {
-          const marked = templates.data.find((t) => (t as { is_default?: boolean }).is_default);
-          templateId = marked?.id ?? templates.data[0]?.id ?? null;
-        }
-
-        setAiFilling(true);
-        skipAutosaveUntilRef.current = Date.now() + 8000;
-        toast.message("Generating email from job…", {
-          description: [job.title, job.company].filter(Boolean).join(" · "),
-        });
-
-        const result = await generateAiEmailFn({
-          data: {
-            templateId,
-            resumeVersionId: search.resumeVersionId ?? null,
-            company: fields.company || null,
-            jobTitle: fields.role || null,
-            jobDescription: fields.jobDescription || null,
-            jobContext: fields.jobContext || null,
-            instructions: null,
-          },
-        });
-        if (cancelled) return;
-
-        if (result.subject) setSubject(result.subject);
-        if (result.body) setBody(result.body);
-        setEditingPreview(false);
-        skipAutosaveUntilRef.current = Date.now() + 2000;
-        toast.success("Email filled from job posting", {
-          description: "Review the preview — you can still edit or regenerate.",
-        });
-      } catch (e) {
-        if (!cancelled) {
-          toast.error("Could not load job / generate email", {
-            description: (e as Error).message,
-          });
-        }
-      } finally {
-        if (!cancelled) setAiFilling(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.jobId, accounts.data, templates.data, prefs.data, getJobFn, generateAiEmailFn]);
-
-  // Restore preserved email after returning from Resume Studio (attach-only — no new AI body).
-  // Peek only (do not take) so React Strict Mode remounts / revisits keep the same draft.
-  const handoffRestoredForRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!search.resumeVersionId) return;
-    if (handoffRestoredForRef.current === search.resumeVersionId) return;
-    const h = peekSendResumeHandoff();
-    if (!h?.attachOnly) return;
-    handoffRestoredForRef.current = search.resumeVersionId;
-    if (h.subject) setSubject(h.subject);
-    if (h.body) setBody(h.body);
-    if (h.recipientText) setRecipientText(h.recipientText);
-    if (h.vars && Object.keys(h.vars).length) setVars((v) => ({ ...v, ...h.vars }));
-    setJobMeta((m) => ({
-      company: h.company || m.company,
-      role: h.role || m.role,
-      jobDescription: h.jobDescription || m.jobDescription,
-      jobContext: h.jobContext || m.jobContext,
-      instructions: h.instructions || m.instructions,
-    }));
-    setEditingPreview(false);
-    skipAutosaveUntilRef.current = Date.now() + 2500;
-    toast.message("Email restored", {
-      description: "Subject & body unchanged — resume PDF attaching…",
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.resumeVersionId]);
-
-  useEffect(() => {
-    autosaveIdRef.current = autosaveId;
-  }, [autosaveId]);
-
   const toggleResume = (id: string) =>
     setResumeIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
-
-  const collectDraftState = async (): Promise<DraftState> => {
-    const inline = await Promise.all(
-      uploads.map(async (f) => ({
-        filename: f.name,
-        mimeType: f.type || "application/octet-stream",
-        size: f.size,
-        base64: await fileToBase64(f),
-      })),
-    );
-    const keptSaved = savedAttachments.filter((a) => uploads.some((u) => u.name === a.filename));
-    const fresh = inline.filter((a) => !keptSaved.some((k) => k.filename === a.filename));
-    return {
-      name: subject || "Untitled draft",
-      gmailAccountId: senderId || null,
-      templateId: tplId || null,
-      resumeVersionId: search.resumeVersionId ?? null,
-      recipients: recipientText,
-      subject,
-      body,
-      variables: vars,
-      resumeIds,
-      attachments: [...keptSaved, ...fresh],
-      company: jobMeta.company,
-      role: jobMeta.role,
-      jobDescription: jobMeta.jobDescription,
-      instructions: jobMeta.instructions,
-    };
-  };
-
-  const applyLoadedDraft = ({ draft, files }: LoadedDraft) => {
-    initedRef.current = true;
-    skipAutosaveUntilRef.current = Date.now() + 2500;
-    setTplId(draft.template_id ?? "");
-    setSenderId(draft.gmail_account_id ?? senderId);
-    setRecipientText(draft.recipients ?? "");
-    setSubject(draft.subject ?? "");
-    setBody(draft.body ?? "");
-    setVars(draft.variables ?? {});
-    setResumeIds(draft.resume_ids ?? []);
-    setUploads(files);
-    setSavedAttachments(draft.attachments ?? []);
-    setJobMeta({
-      company: draft.company ?? "",
-      role: draft.role ?? "",
-      jobDescription: draft.job_description ?? "",
-      jobContext: draft.job_description ?? "",
-      instructions: draft.instructions ?? "",
-    });
-  };
 
   const onUpload = (files: FileList | null) => {
     if (!files) return;
@@ -434,18 +162,13 @@ function SendPage() {
           size: f.size,
         })),
       );
-      const company = jobMeta.company.trim() || vars.company?.trim() || undefined;
-      const role = jobMeta.role.trim() || undefined;
       return sendFn({
         data: {
           templateId: tplId || null,
           gmailAccountId: senderId || null,
           // Send everything the user typed — the server re-validates and skips.
           recipients: parsed.valid.length ? parsed.valid : [],
-          recipientMeta:
-            company || role
-              ? parsed.meta.map((m) => ({ ...m, ...(company ? { company } : {}), ...(role ? { role } : {}) }))
-              : parsed.meta,
+          recipientMeta: parsed.meta,
           subject,
           body,
           variables: vars,
@@ -454,9 +177,8 @@ function SendPage() {
         },
       });
     },
-    onSuccess: async (r) => {
+    onSuccess: (r) => {
       toast.success(`Email sent to ${r.sent} recipient${r.sent === 1 ? "" : "s"}`);
-      clearSendResumeHandoff();
       qc.invalidateQueries({ queryKey: ["dashboard-stats"] });
       qc.invalidateQueries({ queryKey: ["history"] });
       setReport({
@@ -468,91 +190,11 @@ function SendPage() {
       });
       setRecipientText("");
       setUploads([]);
-      skipAutosaveUntilRef.current = Date.now() + 5000;
-      const id = autosaveIdRef.current;
-      if (id) {
-        try {
-          await deleteDraftFn({ data: { id } });
-        } catch {
-          /* ignore */
-        }
-        setAutosaveId(null);
-        autosaveIdRef.current = null;
-      }
     },
     onError: (e) => toast.error("Send failed", { description: (e as Error).message }),
   });
 
-  // Debounced cross-device autosave (text + attachments to Supabase).
-  useEffect(() => {
-    if (!initedRef.current) return;
-    const meaningful = !!(recipientText.trim() || subject.trim() || body.trim() || resumeIds.length || uploads.length);
-    if (!meaningful) return;
-
-    const delay = Math.max(1600, skipAutosaveUntilRef.current - Date.now());
-    const timer = window.setTimeout(async () => {
-      try {
-        const state = await collectDraftState();
-        const r = await autosaveFn({
-          data: {
-            ...state,
-            id: autosaveIdRef.current ?? undefined,
-            name: "Autosaved draft",
-            metadata: { autosave: true },
-          },
-        });
-        setAutosaveId(r.id);
-        autosaveIdRef.current = r.id;
-        if (r.attachments?.length) {
-          setSavedAttachments(r.attachments);
-        }
-      } catch {
-        /* silent — named Save draft still works */
-      }
-    }, delay);
-
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recipientText, subject, body, vars, tplId, senderId, resumeIds, uploads, jobMeta]);
-
-  // Keyboard: ⌘/Ctrl+Enter send · ⌘/Ctrl+⌥/Alt+T template · ⌘/Ctrl+⌥/Alt+R resumes
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      if (genOpen || aiOpen || resumeGenOpen || report) return;
-
-      if (e.key === "Enter") {
-        e.preventDefault();
-        if (
-          !send.isPending &&
-          parsed.valid.length > 0 &&
-          subject.trim() &&
-          body.trim() &&
-          senderId &&
-          !overLimit
-        ) {
-          send.mutate();
-        }
-        return;
-      }
-      if (e.altKey && (e.key === "t" || e.key === "T")) {
-        e.preventDefault();
-        setTplPickerOpen(true);
-        setResumePickerOpen(false);
-        return;
-      }
-      if (e.altKey && (e.key === "r" || e.key === "R")) {
-        e.preventDefault();
-        setResumePickerOpen(true);
-        setTplPickerOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [genOpen, aiOpen, resumeGenOpen, report, send, parsed.valid.length, subject, body, senderId, overLimit]);
-
-  // Auto-attach the compiled PDF from Resume Studio. Only attach PDFs — never .tex.
+  // Auto-attach a generated resume version when arriving from Resume Studio.
   const getVersionFn = useServerFn(getResumeVersion);
   useEffect(() => {
     if (!search.resumeVersionId) return;
@@ -561,33 +203,30 @@ function SendPage() {
       try {
         const r = await getVersionFn({ data: { id: search.resumeVersionId! } });
         if (cancelled) return;
-        if (!r.pdfUrl) {
-          toast.error("No compiled PDF for this resume yet", {
-            description: "Open the resume in Resume Studio and click Compile before sending.",
-          });
-          return;
-        }
-        const { resumePdfName } = await import("@/lib/naming");
-        const pdfName = resumePdfName({
-          fullName: prefs.data?.fullName ?? null,
-          email: prefs.data?.email ?? null,
-          company: r.version.company ?? null,
-        });
-        try {
-          const resp = await fetch(r.pdfUrl);
-          const buf = await resp.arrayBuffer();
-          if (!buf.byteLength) throw new Error("Empty PDF");
-          const pdf = new File([buf], pdfName, { type: "application/pdf" });
-          setUploads((u) => (u.some((x) => x.name === pdf.name) ? u : [...u, pdf]));
-        } catch (err) {
-          toast.error("Could not attach the compiled PDF", { description: (err as Error).message });
+        // Attach as an inline upload (temporary) so the user can review/replace.
+        const filename = `${(r.version.company || r.version.job_title || "resume").replace(/[^A-Za-z0-9._-]+/g, "_")}.tex`;
+        const blob = new Blob([r.version.tex_content], { type: "application/x-tex" });
+        const file = new File([blob], filename, { type: "application/x-tex" });
+        setUploads((u) => (u.some((x) => x.name === file.name) ? u : [...u, file]));
+        // If a PDF was compiled and uploaded to storage, prefer that.
+        if (r.pdfUrl) {
+          try {
+            const resp = await fetch(r.pdfUrl);
+            const buf = await resp.arrayBuffer();
+            const pdf = new File(
+              [buf],
+              filename.replace(/\.tex$/, ".pdf"),
+              { type: "application/pdf" },
+            );
+            setUploads((u) => (u.some((x) => x.name === pdf.name) ? u : [...u, pdf]));
+          } catch { /* ignore, .tex still attached */ }
         }
       } catch (e) {
         toast.error("Could not load resume", { description: (e as Error).message });
       }
     })();
     return () => { cancelled = true; };
-  }, [search.resumeVersionId, getVersionFn, prefs.data]);
+  }, [search.resumeVersionId, getVersionFn]);
 
   if (accounts.data && accounts.data.length === 0) {
     return (
@@ -605,27 +244,20 @@ function SendPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="page-title flex items-center gap-2">
-            {isFollowUp && <Flame className="h-4 w-4 text-primary shrink-0" />}
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+            {isFollowUp && <Flame className="h-5 w-5 text-primary" />}
             {isFollowUp ? "Follow-up Email" : "Send Email"}
           </h1>
           <p className="text-sm text-muted-foreground">
             {isFollowUp ? "Review the pre-filled details and hit send." : "Pick a template, drop in recipients, and send."}
           </p>
         </div>
-        <div className="flex items-stretch sm:items-center gap-2 flex-wrap w-full sm:w-auto">
-          <DraftManager
-            draftId={draftId}
-            onDraftIdChange={setDraftId}
-            getState={collectDraftState}
-            onLoad={applyLoadedDraft}
-          />
+        <div className="min-w-[260px]">
+          <Label className="text-xs">Send from</Label>
           <Select value={senderId} onValueChange={setSenderId}>
-            <SelectTrigger className="w-full sm:w-[220px] h-10 min-w-0">
-              <SelectValue placeholder="Gmail account" />
-            </SelectTrigger>
+            <SelectTrigger><SelectValue placeholder="Select a Gmail account" /></SelectTrigger>
             <SelectContent>
               {accounts.data?.map((a) => (
                 <SelectItem key={a.id} value={a.id}>
@@ -634,52 +266,32 @@ function SendPage() {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            onClick={() => send.mutate()}
-            disabled={
-              send.isPending ||
-              parsed.valid.length === 0 ||
-              !subject.trim() ||
-              !body.trim() ||
-              !senderId ||
-              overLimit
-            }
-            className="shrink-0 h-10 w-full sm:w-auto"
-          >
-            <Send className="h-4 w-4 mr-2" />
-            {send.isPending ? "Sending…" : "Send"}
-          </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
           <Card>
             <CardContent className="py-4 space-y-4">
               <div>
                 <Label>Template</Label>
-                <TemplateCombobox
-                  templates={(templates.data ?? []).map((t) => ({
-                    id: t.id,
-                    name: t.name,
-                    is_default: !!(t as { is_default?: boolean }).is_default,
-                  }))}
-                  value={tplId}
-                  onValueChange={selectTemplate}
-                  placeholder="Choose a template (optional)"
-                  searchPlaceholder="Search templates by name…"
-                  allowClear
-                  clearLabel="No template"
-                  open={tplPickerOpen}
-                  onOpenChange={setTplPickerOpen}
-                />
+                <Select value={tplId} onValueChange={selectTemplate}>
+                  <SelectTrigger><SelectValue placeholder="Choose a template (optional)" /></SelectTrigger>
+                  <SelectContent>
+                    {templates.data?.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}{(t as { is_default?: boolean }).is_default ? " · Default" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {variables.length > 0 && (
                 <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
                   <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Variables</div>
                   {variables.map((v) => (
-                    <div key={v} className="grid grid-cols-1 sm:grid-cols-[120px_1fr] items-start sm:items-center gap-1.5 sm:gap-2">
+                    <div key={v} className="grid grid-cols-[120px_1fr] items-center gap-2">
                       <Label className="text-xs">{`{{${v}}}`}</Label>
                       <Input value={vars[v] ?? ""} onChange={(e) => setVars({ ...vars, [v]: e.target.value })} />
                     </div>
@@ -688,9 +300,9 @@ function SendPage() {
               )}
 
               <div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center justify-between">
                   <Label>Recipients</Label>
-                  <Button type="button" variant="outline" size="sm" className="w-full sm:w-auto" onClick={() => setGenOpen(true)}>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setGenOpen(true)}>
                     <Sparkles className="h-3.5 w-3.5 mr-1" /> Generate Emails
                   </Button>
                 </div>
@@ -710,8 +322,8 @@ function SendPage() {
                 )}
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
+              <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+                <div className="flex items-center justify-between">
                   <Label className="flex items-center gap-1.5"><Paperclip className="h-3.5 w-3.5" /> Attachments</Label>
                   <div>
                     <input
@@ -727,35 +339,39 @@ function SendPage() {
                     </Button>
                   </div>
                 </div>
-
                 {resumes.data && resumes.data.length > 0 && (
-                  <ResumeCombobox
-                    resumes={resumes.data.map((r) => ({
-                      id: r.id,
-                      name: r.name,
-                      is_default: !!r.is_default,
-                    }))}
-                    value={resumeIds}
-                    onToggle={toggleResume}
-                    placeholder="Attach from Resume Library…"
-                    searchPlaceholder="Search resumes by name…"
-                    open={resumePickerOpen}
-                    onOpenChange={setResumePickerOpen}
-                  />
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">From your Resume Library</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {resumes.data.map((r) => {
+                        const on = resumeIds.includes(r.id);
+                        return (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => toggleResume(r.id)}
+                            className={`text-xs rounded-full border px-2.5 py-1 inline-flex items-center gap-1 transition-colors ${on ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"}`}
+                          >
+                            <FileText className="h-3 w-3" />
+                            {r.name}{r.is_default ? " ·★" : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
-
                 {(selectedResumes.length > 0 || uploads.length > 0) && (
                   <div className="space-y-1">
                     {selectedResumes.map((r) => (
-                      <div key={r.id} className="flex items-center justify-between text-xs rounded-md bg-muted/40 border border-border px-2 py-1.5">
-                        <span className="truncate flex items-center gap-1.5"><FileText className="h-3 w-3 shrink-0" /> {r.original_filename} <span className="text-muted-foreground">· {formatBytes(r.size_bytes)}</span></span>
-                        <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0" onClick={() => toggleResume(r.id)}><X className="h-3 w-3" /></Button>
+                      <div key={r.id} className="flex items-center justify-between text-xs rounded-md bg-background border border-border px-2 py-1.5">
+                        <span className="truncate flex items-center gap-1.5"><FileText className="h-3 w-3" /> {r.original_filename} <span className="text-muted-foreground">· {formatBytes(r.size_bytes)} · saved</span></span>
+                        <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => toggleResume(r.id)}><X className="h-3 w-3" /></Button>
                       </div>
                     ))}
                     {uploads.map((f, i) => (
-                      <div key={`u-${i}`} className="flex items-center justify-between text-xs rounded-md bg-muted/40 border border-border px-2 py-1.5">
-                        <span className="truncate flex items-center gap-1.5"><FileText className="h-3 w-3 shrink-0" /> {f.name} <span className="text-muted-foreground">· {formatBytes(f.size)} · temp</span></span>
-                        <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0" onClick={() => setUploads((u) => u.filter((_, j) => j !== i))}><X className="h-3 w-3" /></Button>
+                      <div key={`u-${i}`} className="flex items-center justify-between text-xs rounded-md bg-background border border-border px-2 py-1.5">
+                        <span className="truncate flex items-center gap-1.5"><FileText className="h-3 w-3" /> {f.name} <span className="text-muted-foreground">· {formatBytes(f.size)} · temporary</span></span>
+                        <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setUploads((u) => u.filter((_, j) => j !== i))}><X className="h-3 w-3" /></Button>
                       </div>
                     ))}
                     <div className={`text-xs ${overLimit ? "text-destructive" : "text-muted-foreground"}`}>
@@ -767,6 +383,22 @@ function SendPage() {
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader className="pb-3"><CardTitle className="text-base">Subject & body</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <div><Label>Subject</Label><Input value={subject} onChange={(e) => setSubject(e.target.value)} /></div>
+              <div><Label>Body</Label><Textarea rows={8} value={body} onChange={(e) => setBody(e.target.value)} /></div>
+            </CardContent>
+          </Card>
+
+          <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground flex items-start gap-2">
+            <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>
+              Each recipient gets a personalized greeting like <span className="font-medium text-foreground">Hello Ganesh,</span> —
+              the rest of the template is sent exactly as written. Invalid, duplicate, and unroutable addresses are automatically skipped.
+            </span>
+          </div>
+
           <Button
             onClick={() => send.mutate()}
             disabled={send.isPending || parsed.valid.length === 0 || !subject.trim() || !body.trim() || !senderId || overLimit}
@@ -774,105 +406,29 @@ function SendPage() {
             size="lg"
           >
             <Send className="h-4 w-4 mr-2" />
-            {send.isPending ? "Sending…" : "Send"}
+            {send.isPending ? "Sending…" : `Send to ${parsed.valid.length} recipient${parsed.valid.length === 1 ? "" : "s"}`}
           </Button>
         </div>
 
         <div className="lg:sticky lg:top-4 h-fit">
           <Card>
-            <CardHeader className="pb-3 flex-row items-center justify-between space-y-0 gap-2 flex-wrap">
-              <CardTitle className="text-base">Preview</CardTitle>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={editingPreview ? "default" : "outline"}
-                  onClick={() => setEditingPreview((v) => !v)}
-                >
-                  {editingPreview ? (
-                    <><Eye className="h-3.5 w-3.5 mr-1" /> Preview</>
-                  ) : (
-                    <><Pencil className="h-3.5 w-3.5 mr-1" /> Edit</>
-                  )}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    const company = jobMeta.company || (vars.company ?? "");
-                    const role = jobMeta.role || (vars.name ?? "");
-                    openLinkedOrGenerateResume({
-                      navigate,
-                      jobId: search.jobId,
-                      company,
-                      role,
-                      jobContext: jobMeta.jobContext || jobMeta.jobDescription,
-                      instructions: jobMeta.instructions,
-                      existingResumeVersionId:
-                        search.resumeVersionId ||
-                        getLinkedResumeVersionId({ jobId: search.jobId, company, role }),
-                      preserveEmail: { subject, body, recipientText, vars },
-                      openDialog: () => setResumeGenOpen(true),
-                    });
-                  }}
-                  disabled={aiFilling}
-                >
-                  <Wand2 className="h-3.5 w-3.5 mr-1" />
-                  {search.resumeVersionId ||
-                  getLinkedResumeVersionId({
-                    jobId: search.jobId,
-                    company: jobMeta.company || (vars.company ?? ""),
-                    role: jobMeta.role,
-                  })
-                    ? "Open Resume"
-                    : "Generate Resume"}
-                </Button>
-                <Button type="button" size="sm" variant="outline" onClick={() => setAiOpen(true)} disabled={aiFilling}>
-                  <Sparkles className="h-3.5 w-3.5 mr-1" />
-                  {aiFilling ? "Filling from job…" : "Generate Body Using AI"}
-                </Button>
+            <CardHeader className="pb-3"><CardTitle className="text-base">Preview</CardTitle></CardHeader>
+            <CardContent>
+              <div className="rounded-lg border border-border bg-background p-4 text-sm space-y-2 max-h-[70vh] overflow-auto">
+                <div><span className="text-muted-foreground">From:</span> {selectedSender?.gmail_email ?? "—"}</div>
+                <div className="break-words">
+                  <span className="text-muted-foreground">Bcc ({parsed.valid.length}):</span>{" "}
+                  {parsed.valid.length ? parsed.valid.slice(0, 8).join(", ") + (parsed.valid.length > 8 ? ` +${parsed.valid.length - 8} more` : "") : "—"}
+                </div>
+                <div><span className="text-muted-foreground">Subject:</span> {previewSubject || "—"}</div>
+                {(selectedResumes.length > 0 || uploads.length > 0) && (
+                  <div>
+                    <span className="text-muted-foreground">Attachments ({selectedResumes.length + uploads.length}):</span>{" "}
+                    {[...selectedResumes.map((r) => r.original_filename), ...uploads.map((u) => u.name)].join(", ")}
+                  </div>
+                )}
+                <div className="border-t border-border pt-2 whitespace-pre-wrap">{previewBody || "—"}</div>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {aiFilling && (
-                <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                  Tailoring subject & body from the full job posting…
-                </div>
-              )}
-              {editingPreview ? (
-                <>
-                  <div>
-                    <Label>Subject</Label>
-                    <Input
-                      value={subject}
-                      onChange={(e) => setSubject(e.target.value)}
-                      placeholder="Email subject…"
-                    />
-                  </div>
-                  <div>
-                    <Label>Body</Label>
-                    <Textarea
-                      rows={16}
-                      value={body}
-                      onChange={(e) => setBody(e.target.value)}
-                      placeholder="Write your email body…"
-                      className="min-h-[280px]"
-                    />
-                  </div>
-                </>
-              ) : (
-                <div className="rounded-lg border border-border bg-background p-4 text-sm space-y-3 max-h-[70vh] overflow-auto">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Subject</div>
-                    <div className="font-medium break-words">{previewSubject || subject || "—"}</div>
-                  </div>
-                  <div className="border-t border-border pt-3">
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Body</div>
-                    <div className="whitespace-pre-wrap leading-relaxed">{previewBody || body || "—"}</div>
-                  </div>
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>
@@ -881,7 +437,6 @@ function SendPage() {
       <EmailGeneratorDialog
         open={genOpen}
         onOpenChange={setGenOpen}
-        companyFromEmail={jobMeta.company || vars.company || ""}
         onUse={(emails) => {
           const existing = parsed.valid;
           const merged = Array.from(new Set([...existing, ...emails.map((e) => e.toLowerCase())]));
@@ -890,54 +445,6 @@ function SendPage() {
       />
 
       <SendReportDialog report={report} onClose={() => setReport(null)} />
-
-      <AiBodyDialog
-        open={aiOpen}
-        onOpenChange={setAiOpen}
-        templateId={tplId || null}
-        resumeVersionId={search.resumeVersionId ?? null}
-        jobId={search.jobId ?? null}
-        initialCompany={jobMeta.company || (vars.company ?? "")}
-        initialRole={jobMeta.role}
-        initialJobDescription={jobMeta.jobDescription}
-        initialJobContext={jobMeta.jobContext || jobMeta.jobDescription}
-        preserveEmail={{
-          subject,
-          body,
-          recipientText,
-          vars,
-        }}
-        onUse={(r) => {
-          if (r.subject) setSubject(r.subject);
-          setBody(r.body);
-          setJobMeta({
-            company: r.company,
-            role: r.role,
-            jobDescription: r.jobDescription,
-            jobContext: r.jobContext ?? r.jobDescription,
-            instructions: r.instructions,
-          });
-          setEditingPreview(false);
-          toast.success("AI email applied");
-        }}
-      />
-
-      <GenerateResumeDialog
-        open={resumeGenOpen}
-        onOpenChange={setResumeGenOpen}
-        jobId={search.jobId ?? null}
-        existingResumeVersionId={search.resumeVersionId ?? null}
-        initialCompany={jobMeta.company || (vars.company ?? "")}
-        initialRole={jobMeta.role}
-        initialJobContext={jobMeta.jobContext || jobMeta.jobDescription}
-        initialInstructions={jobMeta.instructions}
-        preserveEmail={{
-          subject,
-          body,
-          recipientText,
-          vars,
-        }}
-      />
     </div>
   );
 }
@@ -1002,9 +509,9 @@ function SendReportDialog({
 function Stat({ label, value, tone }: { label: string; value: number; tone?: "ok" | "err" }) {
   const color = tone === "ok" ? "text-emerald-600 dark:text-emerald-400" : tone === "err" ? "text-destructive" : "";
   return (
-    <div className="rounded-xl border border-border bg-card px-3 py-3 flex flex-col items-center justify-center text-center min-h-[4rem] gap-1">
-      <div className="text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
-      <div className={`text-xl font-semibold leading-none ${color}`}>{value}</div>
+    <div className="rounded-md border border-border bg-background px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className={`text-lg font-semibold ${color}`}>{value}</div>
     </div>
   );
 }
