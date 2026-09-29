@@ -99,7 +99,16 @@ export async function refreshAccessToken(refreshToken: string) {
       grant_type: "refresh_token",
     }),
   });
-  if (!res.ok) throw new Error(`Token refresh failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(`Token refresh failed [${res.status}]: ${body}`);
+    if (/unauthorized_client|invalid_grant|invalid_client/.test(body)) {
+      throw new Error(
+        `unauthorized_client: Gmail access expired or was granted with different Google credentials. Remove this Gmail account in Settings and connect it again.`,
+      );
+    }
+    throw new Error(`Token refresh failed: ${res.status}`);
+  }
   return (await res.json()) as { access_token: string; expires_in: number; scope: string };
 }
 

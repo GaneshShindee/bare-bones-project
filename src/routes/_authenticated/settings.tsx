@@ -258,7 +258,8 @@ function SettingsPage() {
   });
   const test = useMutation({
     mutationFn: (id: string) => testFn({ data: { id } }),
-    onSuccess: (r) => toast.success(`Connected: ${r.email}`),
+    onSuccess: (r) =>
+      r.ok ? toast.success(`Connected: ${r.email}`) : toast.error("Test failed", { description: r.error }),
     onError: (e) => toast.error("Test failed", { description: (e as Error).message }),
   });
 

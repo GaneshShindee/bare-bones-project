@@ -142,16 +142,29 @@ export const testGmailConnection = createServerFn({ method: "POST" })
       .maybeSingle();
     if (error || !conn) throw new Error("Account not found");
     const { refreshAccessToken } = await import("./gmail.server");
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const r = await refreshAccessToken(conn.refresh_token);
-    await supabaseAdmin
+    let r: Awaited<ReturnType<typeof refreshAccessToken>>;
+    try {
+      r = await refreshAccessToken(conn.refresh_token);
+    } catch (e) {
+      const msg = (e as Error).message || "";
+      if (/unauthorized_client|invalid_grant|invalid_client/.test(msg)) {
+        return {
+          ok: false as const,
+          email: conn.gmail_email,
+          error: `Access for ${conn.gmail_email} has expired or was granted with different Google credentials. Please remove this account and connect it again.`,
+        };
+      }
+      return { ok: false as const, email: conn.gmail_email, error: "Could not reach Google to verify this account. Please try again." };
+    }
+    await context.supabase
       .from("gmail_connections")
       .update({
         access_token: r.access_token,
         expires_at: new Date(Date.now() + r.expires_in * 1000).toISOString(),
       })
-      .eq("id", data.id);
-    return { ok: true, email: conn.gmail_email };
+      .eq("id", data.id)
+      .eq("user_id", context.userId);
+    return { ok: true as const, email: conn.gmail_email, error: undefined };
   });
 
 const sendSchema = z.object({
