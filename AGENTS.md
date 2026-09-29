@@ -8,3 +8,5 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Gmail OAuth accepts either the `GOOGLE_GMAIL_*` or existing `GOOGLE_OAUTH_*` secret pair so one configured Google client powers connect and refresh consistently.
