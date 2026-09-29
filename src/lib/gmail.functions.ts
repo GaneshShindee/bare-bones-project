@@ -148,11 +148,13 @@ export const testGmailConnection = createServerFn({ method: "POST" })
     } catch (e) {
       const msg = (e as Error).message || "";
       if (/unauthorized_client|invalid_grant|invalid_client/.test(msg)) {
-        throw new Error(
-          `Access for ${conn.gmail_email} has expired or was granted with different Google credentials. Please remove this account and connect it again.`,
-        );
+        return {
+          ok: false as const,
+          email: conn.gmail_email,
+          error: `Access for ${conn.gmail_email} has expired or was granted with different Google credentials. Please remove this account and connect it again.`,
+        };
       }
-      throw new Error("Could not reach Google to verify this account. Please try again.");
+      return { ok: false as const, email: conn.gmail_email, error: "Could not reach Google to verify this account. Please try again." };
     }
     await context.supabase
       .from("gmail_connections")
@@ -162,7 +164,7 @@ export const testGmailConnection = createServerFn({ method: "POST" })
       })
       .eq("id", data.id)
       .eq("user_id", context.userId);
-    return { ok: true, email: conn.gmail_email };
+    return { ok: true as const, email: conn.gmail_email, error: undefined };
   });
 
 const sendSchema = z.object({
